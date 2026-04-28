@@ -1,0 +1,8 @@
+-- ============================================================
+-- LogBook — Seed
+-- Run AFTER 001_initial_schema.sql
+-- ============================================================
+--
+-- Le catalogue n'est plus seedé en dur ici.
+-- Utiliser le script applicatif pour importer les données externes :
+--   npm run sync:catalog

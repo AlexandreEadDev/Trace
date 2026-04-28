@@ -1,0 +1,113 @@
+'use client'
+
+import { useState } from 'react'
+import { Star } from 'lucide-react'
+import { useMode } from '@/context/ModeContext'
+import { createClient } from '@/lib/supabase/client'
+import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
+import { Label } from '@/components/ui/label'
+import { cn } from '@/lib/utils'
+import type { Review } from '@/types'
+
+interface ReviewFormProps {
+  itemId: string
+  userId: string
+  existing: Review | null
+  onSaved: (review: Review) => void
+}
+
+export function ReviewForm({ itemId, userId, existing, onSaved }: ReviewFormProps) {
+  const { accent } = useMode()
+  const [rating, setRating] = useState(existing?.rating ?? 0)
+  const [hovered, setHovered] = useState(0)
+  const [comment, setComment] = useState(existing?.public_comment ?? '')
+  const [saving, setSaving] = useState(false)
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!rating) return
+    setSaving(true)
+
+    const supabase = createClient()
+    const payload = {
+      user_id: userId,
+      item_id: itemId,
+      rating,
+      public_comment: comment.trim() || null,
+    }
+
+    const { data, error } = existing
+      ? await supabase
+          .from('reviews')
+          .update({ rating, public_comment: payload.public_comment })
+          .eq('id', existing.id)
+          .select()
+          .single()
+      : await supabase.from('reviews').insert(payload).select().single()
+
+    setSaving(false)
+    if (!error && data) onSaved(data as Review)
+  }
+
+  const displayRating = hovered || rating
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      {/* Star rating */}
+      <div className="space-y-1.5">
+        <Label>Votre note</Label>
+        <div className="flex gap-1">
+          {[1, 2, 3, 4, 5].map((star) => (
+            <button
+              key={star}
+              type="button"
+              onMouseEnter={() => setHovered(star)}
+              onMouseLeave={() => setHovered(0)}
+              onClick={() => setRating(star)}
+              className="rounded transition-transform hover:scale-110 focus:outline-none"
+            >
+              <Star
+                className={cn(
+                  'h-7 w-7 transition-colors',
+                  star <= displayRating
+                    ? `fill-${accent}-500 text-${accent}-500`
+                    : 'fill-muted text-muted-foreground'
+                )}
+              />
+            </button>
+          ))}
+          {rating > 0 && (
+            <span className={cn('ml-2 self-center text-sm font-medium', `text-${accent}-600`)}>
+              {rating}/5
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Comment */}
+      <div className="space-y-1.5">
+        <Label htmlFor="public-comment">Commentaire public (optionnel)</Label>
+        <Textarea
+          id="public-comment"
+          placeholder="Partagez votre opinion..."
+          value={comment}
+          onChange={(e) => setComment(e.target.value)}
+          rows={3}
+          className="resize-none"
+        />
+      </div>
+
+      <Button
+        type="submit"
+        disabled={!rating || saving}
+        className={cn(
+          'transition-colors',
+          `bg-${accent}-600 hover:bg-${accent}-700 text-white`
+        )}
+      >
+        {saving ? 'Enregistrement…' : existing ? 'Mettre à jour' : 'Publier'}
+      </Button>
+    </form>
+  )
+}

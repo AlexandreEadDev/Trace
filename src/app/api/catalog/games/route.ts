@@ -6,15 +6,16 @@ export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
   const q = req.nextUrl.searchParams.get('q')
+  const page = Math.max(1, Number(req.nextUrl.searchParams.get('page') ?? '1'))
   try {
     if (hasRawgKey()) {
-      const items = q ? await rawgSearch(q) : await getTrendingGames()
-      return NextResponse.json(items)
+      const result = q ? await rawgSearch(q, 24, page) : await getTrendingGames(24, page)
+      return NextResponse.json(result)
     }
-    // Fallback: FreeToGame (free-to-play only, no API key needed)
+    // Fallback: FreeToGame (no API key needed, no pagination)
     const items = q ? await ftgSearch(q) : await ftgTrending()
-    return NextResponse.json(items)
+    return NextResponse.json({ items, hasMore: false })
   } catch {
-    return NextResponse.json([], { status: 500 })
+    return NextResponse.json({ items: [], hasMore: false })
   }
 }

@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
-import { BookMarked, LayoutDashboard, LogIn, LogOut, Library } from 'lucide-react'
+import { Crosshair, LayoutDashboard, LogIn, LogOut, Library } from 'lucide-react'
 import type { User } from '@supabase/supabase-js'
 import { ModeSwitch } from './ModeSwitch'
 import { useMode } from '@/context/ModeContext'
@@ -44,8 +44,8 @@ export function Navbar() {
         <div className="flex h-16 items-center justify-between gap-4">
           {/* Logo */}
           <Link href="/" className="flex shrink-0 items-center gap-2">
-            <BookMarked className={cn('h-6 w-6', `text-${accent}-600`)} />
-            <span className="text-xl font-bold tracking-tight">LogBook</span>
+            <Crosshair className={cn('h-6 w-6', `text-${accent}-600`)} />
+            <span className="text-xl font-bold tracking-tight">Trace</span>
           </Link>
 
           {/* Center: mode toggle */}

@@ -1,21 +1,58 @@
 export const dynamic = 'force-dynamic'
 
 import { notFound } from 'next/navigation'
-import { Star, Calendar, Tag, ArrowLeft, User } from 'lucide-react'
+import { Star, Calendar, Tag, ArrowLeft, User, Clock, Gamepad2, Gauge, ExternalLink } from 'lucide-react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { PersonalSpace } from './PersonalSpace'
 import { Separator } from '@/components/ui/separator'
 import { Badge } from '@/components/ui/badge'
 import { decodeCatalogId, catalogItemToSupabaseRow } from '@/lib/catalog/types'
-import { getBookByExternalId } from '@/lib/catalog/openlibrary'
+import { getBookByExternalId as getOlBook } from '@/lib/catalog/openlibrary'
+import { getBookByExternalId as getGbBook } from '@/lib/catalog/googlebooks'
 import { getGameByExternalId as getFtgGame } from '@/lib/catalog/freetogame'
 import { getGameByExternalId as getRawgGame } from '@/lib/catalog/rawg'
 import { getMovieByExternalId } from '@/lib/catalog/tmdb'
+import { getHltbData } from '@/lib/catalog/hltb'
+import type { HltbData } from '@/lib/catalog/hltb'
+import { cn } from '@/lib/utils'
 import type { Item, Review } from '@/types'
+import type { CatalogItem } from '@/lib/catalog/types'
 
 interface ItemDetailPageProps {
   params: Promise<{ id: string }>
+}
+
+function formatDuration(minutes: number | null | undefined): string | null {
+  if (!minutes || minutes <= 0) return null
+  const h = Math.floor(minutes / 60)
+  const m = minutes % 60
+  return h > 0 ? `${h}h${m > 0 ? ` ${m}min` : ''}` : `${m}min`
+}
+
+function MetacriticBadge({ score }: { score: number }) {
+  const color =
+    score >= 75 ? 'bg-green-500' : score >= 50 ? 'bg-yellow-500' : 'bg-red-500'
+  return (
+    <span className={cn('inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-bold text-white', color)}>
+      <Gauge className="h-3 w-3" />
+      {score}
+      <span className="font-normal opacity-80">/100</span>
+    </span>
+  )
+}
+
+function TmdbBadge({ score, votes }: { score: number; votes?: number | null }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded bg-blue-600 px-2 py-0.5 text-xs font-bold text-white">
+      <Star className="h-3 w-3 fill-white" />
+      {score.toFixed(1)}
+      <span className="font-normal opacity-80">/10</span>
+      {votes != null && votes > 0 && (
+        <span className="font-normal opacity-60 ml-0.5">({votes.toLocaleString()})</span>
+      )}
+    </span>
+  )
 }
 
 function PublicReviewCard({ review }: { review: Review }) {
@@ -58,12 +95,11 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
 
   let item: Item | null = null
   let supabaseItemId: string | null = null
+  let catalogMeta: CatalogItem | null = null
 
-  // Try to decode as external catalog ID (e.g. "openlibrary__OL12345W")
   const external = decodeCatalogId(rawId)
 
   if (external) {
-    // Look up in Supabase first (might already exist from a previous visit)
     const { data: existing } = await supabase
       .from('items')
       .select('*')
@@ -74,24 +110,23 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
     if (existing) {
       item = existing as Item
       supabaseItemId = existing.id
+      // Re-fetch catalog meta for fresh external data (duration, scores, etc.)
+      if (external.source === 'rawg') catalogMeta = await getRawgGame(external.id)
+      else if (external.source === 'tmdb') catalogMeta = await getMovieByExternalId(external.id)
+      else if (external.source === 'openlibrary') catalogMeta = await getOlBook(external.id)
+      else if (external.source === 'googlebooks') catalogMeta = await getGbBook(external.id)
     } else {
-      // Fetch from external API
-      let catalogItem = null
-      if (external.source === 'openlibrary') {
-        catalogItem = await getBookByExternalId(external.id)
-      } else if (external.source === 'rawg') {
-        catalogItem = await getRawgGame(external.id)
-      } else if (external.source === 'freetogame') {
-        catalogItem = await getFtgGame(external.id)
-      } else if (external.source === 'tmdb') {
-        catalogItem = await getMovieByExternalId(external.id)
-      }
+      let fetched: CatalogItem | null = null
+      if (external.source === 'openlibrary') fetched = await getOlBook(external.id)
+      else if (external.source === 'googlebooks') fetched = await getGbBook(external.id)
+      else if (external.source === 'rawg') fetched = await getRawgGame(external.id)
+      else if (external.source === 'freetogame') fetched = await getFtgGame(external.id)
+      else if (external.source === 'tmdb') fetched = await getMovieByExternalId(external.id)
 
-      if (!catalogItem) notFound()
+      if (!fetched) notFound()
+      catalogMeta = fetched
 
-      // Try to upsert (requires authenticated user OR service role)
-      // If user is not authenticated, we show the item without reviews
-      const row = catalogItemToSupabaseRow(catalogItem)
+      const row = catalogItemToSupabaseRow(fetched)
       const { data: upserted } = await supabase
         .from('items')
         .upsert(row, { onConflict: 'external_source,external_id' })
@@ -102,32 +137,26 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
         item = upserted as Item
         supabaseItemId = upserted.id
       } else {
-        // Not authenticated or RLS blocked — show item without review features
         item = {
           id: rawId,
-          title: catalogItem.title,
-          type: catalogItem.type,
-          genre: catalogItem.genre,
-          cover_url: catalogItem.coverUrl,
-          release_year: catalogItem.releaseYear,
-          external_source: catalogItem.externalSource,
-          external_id: catalogItem.externalId,
+          title: fetched.title,
+          type: fetched.type,
+          genre: fetched.genre,
+          cover_url: fetched.coverUrl,
+          release_year: fetched.releaseYear,
+          duration_minutes: fetched.durationMinutes ?? null,
+          external_source: fetched.externalSource,
+          external_id: fetched.externalId,
         } as Item
       }
     }
   } else {
-    // Legacy UUID-based lookup
-    const { data } = await supabase
-      .from('items')
-      .select('*')
-      .eq('id', rawId)
-      .single()
+    const { data } = await supabase.from('items').select('*').eq('id', rawId).single()
     if (!data) notFound()
     item = data as Item
     supabaseItemId = rawId
   }
 
-  // Load reviews only if we have a real Supabase UUID
   const reviews: Review[] = []
   if (supabaseItemId && supabaseItemId !== rawId) {
     const { data } = await supabase
@@ -149,14 +178,30 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
     ? reviews.reduce((s, r) => s + r.rating, 0) / reviews.length
     : null
 
-  const isBook = item.type === 'book'
-  const accentFrom = isBook ? 'from-amber-400' : 'from-indigo-400'
-  const accentTo = isBook ? 'to-amber-600' : 'to-indigo-600'
-  const accentStar = isBook ? 'fill-amber-500 text-amber-500' : 'fill-indigo-500 text-indigo-500'
+  // Fetch HLTB data in parallel with rendering — only for games
+  let hltb: HltbData | null = null
+  if (item.type === 'game') {
+    hltb = await getHltbData(item.title)
+  }
+
+  const accentClass = item.type === 'book'
+    ? { from: 'from-amber-400', to: 'to-amber-600', star: 'fill-amber-500 text-amber-500' }
+    : item.type === 'game'
+    ? { from: 'from-indigo-400', to: 'to-indigo-600', star: 'fill-indigo-500 text-indigo-500' }
+    : { from: 'from-rose-400', to: 'to-rose-600', star: 'fill-rose-500 text-rose-500' }
+
+  const duration = item.type !== 'game'
+    ? formatDuration(catalogMeta?.durationMinutes ?? item.duration_minutes)
+    : null
+  const metacritic = catalogMeta?.metacritic ?? null
+  const tmdbScore = catalogMeta?.tmdbScore ?? null
+  const tmdbVoteCount = catalogMeta?.tmdbVoteCount ?? null
+  const hasHltb = hltb && (hltb.mainStory || hltb.mainExtra || hltb.completionist)
+
+  const typeLabel = item.type === 'book' ? 'Livre' : item.type === 'game' ? 'Jeu vidéo' : 'Film'
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-10 sm:px-6 lg:px-8 space-y-10">
-      {/* Back */}
       <Link
         href="/catalog"
         className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
@@ -167,19 +212,13 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
 
       {/* Hero */}
       <section className="flex flex-col gap-8 sm:flex-row">
-        <div className="shrink-0 w-40 sm:w-48 rounded-xl overflow-hidden border shadow-md self-start">
+        <div className="shrink-0 w-40 sm:w-52 rounded-xl overflow-hidden border shadow-md self-start">
           <div className="aspect-[2/3]">
             {item.cover_url ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={item.cover_url}
-                alt={item.title}
-                className="h-full w-full object-cover"
-              />
+              <img src={item.cover_url} alt={item.title} className="h-full w-full object-cover" />
             ) : (
-              <div
-                className={`flex h-full w-full items-center justify-center text-6xl font-bold text-white bg-gradient-to-br ${accentFrom} ${accentTo}`}
-              >
+              <div className={`flex h-full w-full items-center justify-center text-6xl font-bold text-white bg-gradient-to-br ${accentClass.from} ${accentClass.to}`}>
                 {item.title.charAt(0).toUpperCase()}
               </div>
             )}
@@ -188,27 +227,86 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
 
         <div className="space-y-4 flex-1">
           <div>
-            <Badge variant="secondary" className="mb-2 capitalize">
-              {isBook ? 'Livre' : 'Jeu vidéo'}
-            </Badge>
-            <h1 className="text-3xl font-bold tracking-tight">{item.title}</h1>
+            <Badge variant="secondary" className="mb-2 capitalize">{typeLabel}</Badge>
+            <h1 className="text-3xl font-bold tracking-tight leading-tight">{item.title}</h1>
           </div>
 
-          <div className="flex flex-wrap gap-3 text-sm text-muted-foreground">
+          {/* Metadata row */}
+          <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm text-muted-foreground">
             {item.genre && (
               <span className="flex items-center gap-1.5">
-                <Tag className="h-3.5 w-3.5" />
-                {item.genre}
+                <Tag className="h-3.5 w-3.5" />{item.genre}
               </span>
             )}
             {item.release_year && (
               <span className="flex items-center gap-1.5">
-                <Calendar className="h-3.5 w-3.5" />
-                {item.release_year}
+                <Calendar className="h-3.5 w-3.5" />{item.release_year}
+              </span>
+            )}
+            {duration && item.type !== 'game' && (
+              <span className="flex items-center gap-1.5">
+                <Clock className="h-3.5 w-3.5" />
+                {duration}
               </span>
             )}
           </div>
 
+          {/* HLTB breakdown for games */}
+          {item.type === 'game' && (
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                <Gamepad2 className="h-3.5 w-3.5" />
+                <span className="font-medium">HowLongToBeat</span>
+              </span>
+              {hasHltb ? (
+                <>
+                  {hltb!.mainStory != null && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-indigo-50 dark:bg-indigo-950 px-2.5 py-0.5 text-xs font-medium text-indigo-700 dark:text-indigo-300">
+                      Histoire&nbsp;<strong>{hltb!.mainStory}h</strong>
+                    </span>
+                  )}
+                  {hltb!.mainExtra != null && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-violet-50 dark:bg-violet-950 px-2.5 py-0.5 text-xs font-medium text-violet-700 dark:text-violet-300">
+                      Histoire&nbsp;+&nbsp;Extras&nbsp;<strong>{hltb!.mainExtra}h</strong>
+                    </span>
+                  )}
+                  {hltb!.completionist != null && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-purple-50 dark:bg-purple-950 px-2.5 py-0.5 text-xs font-medium text-purple-700 dark:text-purple-300">
+                      100%&nbsp;<strong>{hltb!.completionist}h</strong>
+                    </span>
+                  )}
+                  <a
+                    href={hltb!.searchUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    <ExternalLink className="h-3 w-3 inline" />
+                  </a>
+                </>
+              ) : (
+                <a
+                  href={`https://howlongtobeat.com/?q=${encodeURIComponent(item.title)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-indigo-500 hover:text-indigo-400 transition-colors flex items-center gap-1"
+                >
+                  Voir les temps <ExternalLink className="h-3 w-3" />
+                </a>
+              )}
+            </div>
+          )}
+
+          {/* External scores */}
+          {(metacritic != null || tmdbScore != null) && (
+            <div className="flex flex-wrap gap-2 items-center">
+              <span className="text-xs text-muted-foreground font-medium">Notes externes :</span>
+              {metacritic != null && <MetacriticBadge score={metacritic} />}
+              {tmdbScore != null && <TmdbBadge score={tmdbScore} votes={tmdbVoteCount} />}
+            </div>
+          )}
+
+          {/* Internal rating */}
           <div className="flex items-center gap-2">
             <div className="flex">
               {[1, 2, 3, 4, 5].map((s) => (
@@ -216,7 +314,7 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
                   key={s}
                   className={`h-5 w-5 ${
                     avgRating !== null && s <= Math.round(avgRating)
-                      ? accentStar
+                      ? accentClass.star
                       : 'fill-muted text-muted-foreground'
                   }`}
                 />
@@ -225,9 +323,7 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
             <span className="text-sm font-medium">
               {avgRating !== null ? avgRating.toFixed(1) : '—'}
             </span>
-            <span className="text-sm text-muted-foreground">
-              ({reviews.length} avis)
-            </span>
+            <span className="text-sm text-muted-foreground">({reviews.length} avis Trace)</span>
           </div>
         </div>
       </section>
@@ -239,9 +335,7 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
         <section className="space-y-4">
           <h2 className="text-lg font-semibold">
             Avis publics{' '}
-            <span className="text-sm font-normal text-muted-foreground">
-              ({reviews.length})
-            </span>
+            <span className="text-sm font-normal text-muted-foreground">({reviews.length})</span>
           </h2>
           {reviews.length === 0 ? (
             <p className="text-sm text-muted-foreground py-4">
@@ -258,8 +352,11 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
 
         {/* Personal space */}
         <section className="space-y-4">
-          <h2 className="text-lg font-semibold">Votre espace</h2>
-          <PersonalSpace itemId={supabaseItemId ?? rawId} />
+          <h2 className="text-lg font-semibold">Ton espace</h2>
+          <PersonalSpace
+            itemId={supabaseItemId ?? rawId}
+            itemType={item.type}
+          />
         </section>
       </div>
     </div>

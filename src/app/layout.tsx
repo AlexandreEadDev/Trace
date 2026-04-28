@@ -7,9 +7,9 @@ import { Navbar } from '@/components/Navbar'
 const inter = Inter({ subsets: ['latin'], variable: '--font-sans' })
 
 export const metadata: Metadata = {
-  title: 'LogBook — Ma bibliothèque & ludothèque numérique',
+  title: 'Trace — Ta bibliothèque, ludothèque & cinémathèque',
   description:
-    'Suivez vos lectures et jeux vidéo, notez-les publiquement et tenez un journal privé.',
+    'Suis tes lectures, jeux vidéo et films. Note-les, partage tes avis et tiens un journal privé.',
 }
 
 export default function RootLayout({

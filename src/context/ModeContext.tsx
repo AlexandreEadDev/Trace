@@ -30,7 +30,7 @@ export function ModeProvider({ children }: { children: React.ReactNode }) {
   const [mode, setModeState] = useState<Mode>('book')
 
   useEffect(() => {
-    const saved = localStorage.getItem('logbook-mode') as Mode | null
+    const saved = localStorage.getItem('trace-mode') as Mode | null
     if (saved === 'book' || saved === 'game' || saved === 'movie') {
       setModeState(saved)
     }
@@ -38,7 +38,7 @@ export function ModeProvider({ children }: { children: React.ReactNode }) {
 
   const setMode = (m: Mode) => {
     setModeState(m)
-    localStorage.setItem('logbook-mode', m)
+    localStorage.setItem('trace-mode', m)
   }
 
   return (

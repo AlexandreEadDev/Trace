@@ -1,120 +1,105 @@
 import type { CatalogItem } from './types'
 
-const BASE = 'https://openlibrary.org'
+const OL = 'https://openlibrary.org'
+const COVERS = 'https://covers.openlibrary.org/b/id'
 
-const TRENDING_SUBJECTS = [
-  'science_fiction',
-  'fantasy',
-  'thriller',
-  'mystery',
-  'historical_fiction',
-]
-
-function coverUrl(coverId: number | null | undefined): string | null {
-  if (!coverId) return null
-  return `https://covers.openlibrary.org/b/id/${coverId}-M.jpg`
-}
-
-async function fetchWithTimeout(url: string, ms = 12000): Promise<Response> {
+async function fetchSafe(url: string, ms = 10000): Promise<Response> {
   const controller = new AbortController()
   const id = setTimeout(() => controller.abort(), ms)
   try {
-    const res = await fetch(url, {
-      signal: controller.signal,
-      next: { revalidate: 3600 },
-    })
-    return res
+    return await fetch(url, { signal: controller.signal, cache: 'no-store' })
   } finally {
     clearTimeout(id)
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function workToItem(work: any, fallbackGenre: string): CatalogItem {
-  const id: string =
-    typeof work.key === 'string'
-      ? work.key.replace('/works/', '')
-      : String(work.key)
+function coverUrl(id: number | null | undefined, size: 'M' | 'L' = 'L'): string | null {
+  if (!id) return null
+  return `${COVERS}/${id}-${size}.jpg`
+}
 
-  const rawSubject = Array.isArray(work.subject)
-    ? work.subject[0]
-    : Array.isArray(work.subjects)
-    ? typeof work.subjects[0] === 'string'
-      ? work.subjects[0]
-      : null
-    : null
+/**
+ * Maps a work from Open Library's /trending endpoint.
+ * Fields available: key, title, author_name, cover_i, first_publish_year, edition_count.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function trendingWorkToItem(work: any): CatalogItem | null {
+  if (!work?.title || !work.key) return null
+
+  const coverId = work.cover_i ?? null
+  const cover = coverUrl(coverId, 'L')
+  if (!cover) return null // Must have a cover
+
+  const authors: string[] = Array.isArray(work.author_name) ? work.author_name : []
+  if (authors.length === 0) return null // Must have an author
+
+  const id = typeof work.key === 'string'
+    ? work.key.replace('/works/', '')
+    : String(work.key)
+
+  const year: number | null = work.first_publish_year ?? null
+
+  // Popularity proxy: edition_count (more editions = more reprints = popular)
+  const editions: number = typeof work.edition_count === 'number' ? work.edition_count : 0
+  const editionScore = Math.min(Math.log10(editions + 1) / Math.log10(200), 1) * 100
 
   return {
     externalSource: 'openlibrary',
     externalId: id,
     title: work.title,
     type: 'book',
-    genre: rawSubject ?? fallbackGenre.replace(/_/g, ' '),
-    coverUrl: coverUrl(work.cover_id ?? work.cover_i),
-    releaseYear: work.first_publish_year ?? null,
-    authors: work.authors?.map((a: { name: string }) => a.name) ?? [],
+    genre: null, // Trending endpoint doesn't return subjects
+    coverUrl: cover,
+    releaseYear: year,
+    authors,
+    popularityScore: Math.round(editionScore),
   }
 }
 
-export async function getTrendingBooks(limit = 12): Promise<CatalogItem[]> {
-  const subject =
-    TRENDING_SUBJECTS[Math.floor(Math.random() * TRENDING_SUBJECTS.length)]
-
-  try {
-    const res = await fetchWithTimeout(
-      `${BASE}/subjects/${subject}.json?limit=${limit}`
-    )
-    if (!res.ok) return []
-    const data = await res.json()
-    return (data.works ?? []).map((w: object) =>
-      workToItem(w, subject)
-    )
-  } catch {
-    return []
-  }
+export interface PagedResult {
+  items: CatalogItem[]
+  hasMore: boolean
 }
 
-export async function searchBooks(query: string, limit = 24): Promise<CatalogItem[]> {
-  const url = new URL(`${BASE}/search.json`)
-  url.searchParams.set('q', query)
-  url.searchParams.set('limit', String(limit))
-  url.searchParams.set('fields', 'key,title,cover_i,first_publish_year,subject,author_name')
+/**
+ * Trending books from Open Library's real-time trending endpoint.
+ * Sorted by weekly page views — these are genuinely popular books.
+ */
+export async function getTrendingBooks(limit = 24, page = 1): Promise<PagedResult> {
+  const fetchLimit = Math.min(limit + 12, 48)
 
   try {
-    const res = await fetchWithTimeout(url.toString(), 15000)
-    if (!res.ok) return []
+    const res = await fetchSafe(
+      `${OL}/trending/weekly.json?limit=${fetchLimit}&page=${page}`,
+      8000
+    )
+    if (!res.ok) return { items: [], hasMore: false }
     const data = await res.json()
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (data.docs ?? []).map((doc: any) => ({
-      externalSource: 'openlibrary' as const,
-      externalId: (doc.key as string).replace('/works/', ''),
-      title: doc.title,
-      type: 'book' as const,
-      genre: doc.subject?.[0] ?? null,
-      coverUrl: coverUrl(doc.cover_i),
-      releaseYear: doc.first_publish_year ?? null,
-      authors: doc.author_name ?? [],
-    }))
+    const works: unknown[] = data.works ?? []
+
+    const items = works
+      .map(trendingWorkToItem)
+      .filter((it): it is CatalogItem => it !== null)
+      .slice(0, limit)
+
+    // OL trending has no total_numFound, estimate from fetched count
+    const hasMore = works.length >= fetchLimit
+    return { items, hasMore }
   } catch {
-    return []
+    return { items: [], hasMore: false }
   }
 }
 
 export async function getBookByExternalId(externalId: string): Promise<CatalogItem | null> {
   try {
-    const res = await fetchWithTimeout(
-      `${BASE}/works/${externalId}.json`,
-      12000
-    )
+    const res = await fetchSafe(`${OL}/works/${externalId}.json`, 12000)
     if (!res.ok) return null
 
     const work = await res.json()
     if (!work?.title) return null
 
     const coverId =
-      Array.isArray(work.covers) && work.covers.length > 0
-        ? work.covers[0]
-        : null
+      Array.isArray(work.covers) && work.covers.length > 0 ? work.covers[0] : null
 
     let releaseYear: number | null = null
     if (work.first_publish_date) {
@@ -126,10 +111,9 @@ export async function getBookByExternalId(externalId: string): Promise<CatalogIt
     const genre =
       typeof rawSubjects[0] === 'string'
         ? rawSubjects[0]
-        : // some OL works return {type, value} objects
-          typeof (rawSubjects[0] as { value?: string })?.value === 'string'
-          ? (rawSubjects[0] as { value: string }).value
-          : null
+        : typeof (rawSubjects[0] as { value?: string })?.value === 'string'
+        ? (rawSubjects[0] as { value: string }).value
+        : null
 
     return {
       externalSource: 'openlibrary',

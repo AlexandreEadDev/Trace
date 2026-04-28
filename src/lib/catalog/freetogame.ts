@@ -2,6 +2,16 @@ import type { CatalogItem } from './types'
 
 const BASE = 'https://www.freetogame.com/api'
 
+async function fetchSafe(url: string, ms = 10000): Promise<Response> {
+  const controller = new AbortController()
+  const id = setTimeout(() => controller.abort(), ms)
+  try {
+    return await fetch(url, { signal: controller.signal, cache: 'no-store' })
+  } finally {
+    clearTimeout(id)
+  }
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function gameToItem(game: any): CatalogItem {
   const year = Number.parseInt(String(game.release_date ?? '').slice(0, 4), 10)
@@ -23,13 +33,16 @@ async function getAllGames(): Promise<CatalogItem[]> {
   const now = Date.now()
   if (allGamesCache && now - cacheTime < 3_600_000) return allGamesCache
 
-  const res = await fetch(`${BASE}/games`, { next: { revalidate: 3600 } })
-  if (!res.ok) return []
-
-  const data = await res.json()
-  allGamesCache = Array.isArray(data) ? data.map(gameToItem) : []
-  cacheTime = now
-  return allGamesCache
+  try {
+    const res = await fetchSafe(`${BASE}/games`)
+    if (!res.ok) return []
+    const data = await res.json()
+    allGamesCache = Array.isArray(data) ? data.map(gameToItem) : []
+    cacheTime = now
+    return allGamesCache
+  } catch {
+    return []
+  }
 }
 
 export async function getTrendingGames(limit = 12): Promise<CatalogItem[]> {
@@ -52,10 +65,12 @@ export async function searchGames(query: string): Promise<CatalogItem[]> {
 export async function getGameByExternalId(
   externalId: string
 ): Promise<CatalogItem | null> {
-  const res = await fetch(`${BASE}/game?id=${externalId}`, {
-    next: { revalidate: 3600 },
-  })
-  if (!res.ok) return null
-  const game = await res.json()
-  return gameToItem(game)
+  try {
+    const res = await fetchSafe(`${BASE}/game?id=${externalId}`)
+    if (!res.ok) return null
+    const game = await res.json()
+    return gameToItem(game)
+  } catch {
+    return null
+  }
 }

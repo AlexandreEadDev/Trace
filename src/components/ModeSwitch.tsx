@@ -23,14 +23,14 @@ export function ModeSwitch() {
     <div
       role="group"
       aria-label="Mode de navigation"
-      className="flex gap-1 rounded-full bg-muted p-1"
+      className="flex items-center justify-center gap-1 rounded-full bg-muted p-1"
     >
       {MODES.map(({ value, label, Icon, activeClass }) => (
         <button
           key={value}
           onClick={() => setMode(value)}
           className={cn(
-            'flex items-center gap-1.5 rounded-full px-3 sm:px-4 py-1.5 text-sm font-medium transition-all duration-250',
+            'flex items-center justify-center gap-1.5 rounded-full px-2.5 py-1.5 text-xs font-medium transition-all duration-250 sm:px-4 sm:text-sm',
             mode === value
               ? `${activeClass} text-white shadow-sm scale-[1.03]`
               : 'text-muted-foreground hover:text-foreground'

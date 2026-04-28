@@ -55,6 +55,27 @@ function TmdbBadge({ score, votes }: { score: number; votes?: number | null }) {
   )
 }
 
+function HalfStarDisplay({ rating, className }: { rating: number; className?: string }) {
+  return (
+    <div className={cn('flex', className)}>
+      {[1, 2, 3, 4, 5].map((s) => {
+        const full = s <= Math.floor(rating)
+        const half = !full && s === Math.ceil(rating) && rating % 1 === 0.5
+        return (
+          <div key={s} className="relative h-3.5 w-3.5">
+            <Star className="h-3.5 w-3.5 fill-muted text-muted-foreground" />
+            {(full || half) && (
+              <div className={cn('absolute inset-0 overflow-hidden', half ? 'w-1/2' : 'w-full')}>
+                <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 function PublicReviewCard({ review }: { review: Review }) {
   return (
     <div className="rounded-lg border bg-card p-4 space-y-2">
@@ -62,19 +83,11 @@ function PublicReviewCard({ review }: { review: Review }) {
         <div className="flex items-center justify-center h-7 w-7 rounded-full bg-muted shrink-0">
           <User className="h-3.5 w-3.5 text-muted-foreground" />
         </div>
-        <div className="flex">
-          {[1, 2, 3, 4, 5].map((s) => (
-            <Star
-              key={s}
-              className={`h-3.5 w-3.5 ${
-                s <= review.rating
-                  ? 'fill-amber-400 text-amber-400'
-                  : 'fill-muted text-muted-foreground'
-              }`}
-            />
-          ))}
-        </div>
-        <span className="text-xs text-muted-foreground">
+        <HalfStarDisplay rating={review.rating} />
+        <span className="text-xs font-medium text-amber-600">
+          {Number.isInteger(review.rating) ? review.rating : review.rating.toFixed(1)}/5
+        </span>
+        <span className="text-xs text-muted-foreground ml-auto">
           {new Date(review.created_at).toLocaleDateString('fr-FR', {
             year: 'numeric',
             month: 'long',
@@ -307,24 +320,28 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
           )}
 
           {/* Internal rating */}
-          <div className="flex items-center gap-2">
-            <div className="flex">
-              {[1, 2, 3, 4, 5].map((s) => (
-                <Star
-                  key={s}
-                  className={`h-5 w-5 ${
-                    avgRating !== null && s <= Math.round(avgRating)
-                      ? accentClass.star
-                      : 'fill-muted text-muted-foreground'
-                  }`}
-                />
-              ))}
+          {avgRating !== null && (
+            <div className="flex items-center gap-2">
+              <div className="flex">
+                {[1, 2, 3, 4, 5].map((s) => {
+                  const full = s <= Math.floor(avgRating)
+                  const half = !full && s === Math.ceil(avgRating) && avgRating % 1 >= 0.25 && avgRating % 1 < 0.75
+                  return (
+                    <div key={s} className="relative h-5 w-5">
+                      <Star className="h-5 w-5 fill-muted text-muted-foreground" />
+                      {(full || half) && (
+                        <div className={cn('absolute inset-0 overflow-hidden', half ? 'w-1/2' : 'w-full')}>
+                          <Star className={cn('h-5 w-5', accentClass.star)} />
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+              <span className="text-sm font-semibold">{avgRating.toFixed(1)}</span>
+              <span className="text-sm text-muted-foreground">({reviews.length} avis Trace)</span>
             </div>
-            <span className="text-sm font-medium">
-              {avgRating !== null ? avgRating.toFixed(1) : '—'}
-            </span>
-            <span className="text-sm text-muted-foreground">({reviews.length} avis Trace)</span>
-          </div>
+          )}
         </div>
       </section>
 

@@ -13,7 +13,6 @@ import {
 } from 'recharts'
 import { useMode } from '@/context/ModeContext'
 import { createClient } from '@/lib/supabase/client'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import { MODE_STATUS_LABELS } from '@/types'
@@ -77,21 +76,21 @@ function EntryRow({
   return (
     <Link
       href={`/item/${item.id}`}
-      className="flex items-center gap-4 rounded-lg border bg-card p-4 transition-all hover:shadow-sm hover:-translate-y-0.5 group"
+      className="group flex items-center gap-3 rounded-lg border bg-card p-3 transition-all hover:-translate-y-0.5 hover:shadow-sm"
     >
-      <div className="shrink-0 w-10 h-14 rounded overflow-hidden border">
+      <div className="h-14 w-10 shrink-0 overflow-hidden rounded border">
         {item.cover_url ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={item.cover_url} alt={item.title} className="h-full w-full object-cover" />
         ) : (
-          <div className={cn('flex h-full w-full items-center justify-center text-sm font-bold text-white', `bg-gradient-to-br from-${accent}-400 to-${accent}-600`)}>
+          <div className={cn('flex h-full w-full items-center justify-center text-xs font-bold text-white', `bg-gradient-to-br from-${accent}-400 to-${accent}-600`)}>
             {item.title.charAt(0)}
           </div>
         )}
       </div>
       <div className="flex-1 min-w-0">
-        <p className="font-medium truncate">{item.title}</p>
-        <div className="flex items-center gap-2 mt-0.5">
+        <p className="truncate text-sm font-semibold leading-snug">{item.title}</p>
+        <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
           {item.genre && <span className="text-xs text-muted-foreground">{item.genre}</span>}
           {item.release_year && <span className="text-xs text-muted-foreground">· {item.release_year}</span>}
         </div>
@@ -102,7 +101,7 @@ function EntryRow({
           </p>
         )}
       </div>
-      <ArrowRight className="shrink-0 h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+      <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
     </Link>
   )
 }
@@ -309,41 +308,56 @@ export default function DashboardPage() {
       </div>
 
       {/* ── Library list ── */}
-      <section>
-        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as StatusType)}>
-          <div className="flex items-center gap-2 mb-4">
-            <TabsList className="inline-flex">
-              {(['backlog', 'completed'] as StatusType[]).map((s) => (
-                <TabsTrigger key={s} value={s} className="px-4 py-1.5 text-sm">
+      <section className="space-y-3">
+        {/* Pill toggle — same style as header ModeSwitch */}
+        <div className="flex items-center justify-between">
+          <h2 className="text-base font-semibold text-muted-foreground">Ma collection</h2>
+          <div role="group" className="flex items-center gap-1 rounded-full bg-muted p-1">
+            {(['backlog', 'completed'] as StatusType[]).map((s) => {
+              const accentActive = accent === 'amber' ? 'bg-amber-600' : accent === 'indigo' ? 'bg-indigo-600' : 'bg-rose-600'
+              return (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setActiveTab(s)}
+                  className={cn(
+                    'flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-all duration-200 sm:text-sm',
+                    activeTab === s
+                      ? `${accentActive} text-white shadow-sm scale-[1.03]`
+                      : 'text-muted-foreground hover:text-foreground'
+                  )}
+                >
                   {labels[s]}
                   {!loading && byStatus(s).length > 0 && (
-                    <Badge variant="secondary" className="ml-1.5 h-4 px-1 text-[10px]">
+                    <span className={cn(
+                      'inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-bold tabular-nums',
+                      activeTab === s ? 'bg-white/25 text-white' : 'bg-muted-foreground/20 text-muted-foreground'
+                    )}>
                       {byStatus(s).length}
-                    </Badge>
+                    </span>
                   )}
-                </TabsTrigger>
-              ))}
-            </TabsList>
+                </button>
+              )
+            })}
           </div>
+        </div>
 
-          {(['backlog', 'completed'] as StatusType[]).map((s) => (
-            <TabsContent key={s} value={s} className="mt-4 space-y-2">
-              {loading ? (
-                <div className="space-y-2">
-                  {[1, 2, 3].map((i) => (
-                    <div key={i} className="h-20 animate-pulse rounded-lg border bg-muted" />
-                  ))}
-                </div>
-              ) : byStatus(s).length === 0 ? (
-                <EmptyState status={s} accent={accent} itemType={mode} />
-              ) : (
-                byStatus(s).map((entry) => (
-                  <EntryRow key={entry.id} entry={entry} accent={accent} />
-                ))
-              )}
-            </TabsContent>
-          ))}
-        </Tabs>
+        {/* Content */}
+        <div className="space-y-2">
+          {loading ? (
+            <>
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="h-16 animate-pulse rounded-lg border bg-muted" />
+              ))}
+            </>
+          ) : byStatus(activeTab).length === 0 ? (
+            <EmptyState status={activeTab} accent={accent} itemType={mode} />
+          ) : (
+            byStatus(activeTab).map((entry) => (
+              <EntryRow key={entry.id} entry={entry} accent={accent} />
+            ))
+          )}
+        </div>
       </section>
 
       {/* ── Journal privé ── */}

@@ -4,92 +4,37 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import {
   Search, Gamepad2, Film, X, SlidersHorizontal,
-  ChevronDown, ChevronLeft, ChevronRight, TrendingUp, BookMarked,
+  ChevronDown, ChevronLeft, ChevronRight, TrendingUp, BookMarked, LibraryBig,
 } from 'lucide-react'
 import { useMode } from '@/context/ModeContext'
 import type { NavMode } from '@/context/ModeContext'
+import type { ModeAccent } from '@/context/ModeContext'
 import { cn } from '@/lib/utils'
 import { encodeCatalogId } from '@/lib/catalog/types'
 import type { CatalogItem } from '@/lib/catalog/types'
+import { catalogDebug, isCatalogDebug } from '@/lib/catalog/debugLog'
+import {
+  BOOK_GENRES,
+  MANGA_CATALOG_GENRES as MANGA_GENRES,
+  GAME_GENRES,
+  MOVIE_GENRES,
+} from '@/lib/catalog/genres'
+import type { GenreDef } from '@/lib/catalog/genres'
 
 export const dynamic = 'force-dynamic'
 
 const PAGE_SIZE = 24
 
-// ─── Predefined genre lists ───────────────────────────────────────────────────
-
-interface GenreDef { label: string; matches: string[] }
-
 const GENRE_LISTS: Record<NavMode, GenreDef[]> = {
-  book: [
-    // Livres
-    { label: 'Roman', matches: ['fiction', 'novel', 'roman', 'literary'] },
-    { label: 'Fantasy', matches: ['fantasy', 'fantastique', 'fantaisie'] },
-    { label: 'Science-Fiction', matches: ['science fiction', 'sci-fi', 'science-fiction'] },
-    { label: 'Thriller / Policier', matches: ['thriller', 'mystery', 'crime', 'policier', 'detective'] },
-    { label: 'Romance', matches: ['romance', 'love stories'] },
-    { label: 'Biographie', matches: ['biography', 'memoir', 'autobiograph', 'biographie'] },
-    { label: 'Histoire', matches: ['history', 'historical', 'histoire'] },
-    { label: 'Horreur', matches: ['horror', 'horreur'] },
-    { label: 'Jeunesse', matches: ['young adult', 'juvenile', 'children', 'jeunesse'] },
-    { label: 'Humour', matches: ['humor', 'humour', 'comedy', 'comic'] },
-    // Manga — démographies
-    { label: 'Shōnen', matches: ['shounen', 'shonen', 'shōnen'] },
-    { label: 'Seinen', matches: ['seinen'] },
-    { label: 'Shōjo', matches: ['shoujo', 'shojo', 'shōjo'] },
-    { label: 'Josei', matches: ['josei'] },
-    // Manga — genres thématiques
-    { label: 'Action', matches: ['action'] },
-    { label: 'Aventure', matches: ['adventure', 'aventure'] },
-    { label: 'Comédie', matches: ['comedy', 'comédie'] },
-    { label: 'Drame', matches: ['drama', 'drame'] },
-    { label: 'Isekai', matches: ['isekai'] },
-    { label: 'Sports', matches: ['sports', 'sport'] },
-    { label: 'Slice of Life', matches: ['slice of life'] },
-    { label: 'Surnaturel', matches: ['supernatural', 'surnaturel'] },
-    { label: 'Horreur (manga)', matches: ['horror'] },
-    { label: 'Mystère', matches: ['mystery', 'mystère', 'mystere'] },
-  ],
-  game: [
-    { label: 'Action', matches: ['action'] },
-    { label: 'RPG', matches: ['rpg', 'role-playing', 'role playing'] },
-    { label: 'FPS / TPS', matches: ['shooter', 'fps', 'tps'] },
-    { label: 'Stratégie', matches: ['strategy', 'stratégie'] },
-    { label: 'Aventure', matches: ['adventure', 'aventure'] },
-    { label: 'Sports', matches: ['sports', 'sport', 'racing', 'course'] },
-    { label: 'Puzzle', matches: ['puzzle'] },
-    { label: 'Simulation', matches: ['simulation'] },
-    { label: 'Plateforme', matches: ['platform', 'platformer', 'plateforme'] },
-    { label: 'Horreur', matches: ['horror', 'horreur'] },
-    { label: 'Indie', matches: ['indie'] },
-    { label: 'Arcade', matches: ['arcade'] },
-    { label: 'MMO', matches: ['mmo', 'massively', 'mmorpg'] },
-    { label: 'Combat', matches: ['fighting', 'combat'] },
-  ],
-  movie: [
-    { label: 'Action', matches: ['action'] },
-    { label: 'Comédie', matches: ['comedy', 'comédie'] },
-    { label: 'Drame', matches: ['drama', 'drame'] },
-    { label: 'Science-Fiction', matches: ['science fiction', 'sci-fi', 'science-fiction'] },
-    { label: 'Animation', matches: ['animation', 'animé', 'anime', 'animated'] },
-    { label: 'Horreur', matches: ['horror', 'horreur'] },
-    { label: 'Romance', matches: ['romance'] },
-    { label: 'Thriller', matches: ['thriller'] },
-    { label: 'Documentaire', matches: ['documentary', 'documentaire'] },
-    { label: 'Aventure', matches: ['adventure', 'aventure'] },
-    { label: 'Fantaisie', matches: ['fantasy', 'fantaisie', 'fantastique'] },
-    { label: 'Crime / Policier', matches: ['crime', 'policier', 'detective'] },
-    { label: 'Famille', matches: ['family', 'famille'] },
-    { label: 'Historique', matches: ['history', 'historical', 'historique', 'histoire', 'war', 'guerre'] },
-    { label: 'Mystère', matches: ['mystery', 'mystère', 'mystere'] },
-    { label: 'Musical', matches: ['music', 'musical'] },
-    { label: 'Western', matches: ['western'] },
-  ],
+  book: BOOK_GENRES,
+  manga: MANGA_GENRES,
+  game: GAME_GENRES,
+  movie: MOVIE_GENRES,
 }
 
 // ─── Cover image ─────────────────────────────────────────────────────────────
 
-function CoverImage({ src, alt, accent }: { src: string | null; alt: string; accent: 'amber' | 'indigo' | 'rose' }) {
+function CoverImage({ src, alt, accent }: { src: string | null; alt: string; accent: ModeAccent }) {
   const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState(false)
 
@@ -120,7 +65,7 @@ function CoverImage({ src, alt, accent }: { src: string | null; alt: string; acc
 
 // ─── Card ─────────────────────────────────────────────────────────────────────
 
-function CatalogCard({ item, accent }: { item: CatalogItem; accent: 'amber' | 'indigo' | 'rose' }) {
+function CatalogCard({ item, accent }: { item: CatalogItem; accent: ModeAccent }) {
   const href = `/item/${encodeCatalogId(item.externalSource, item.externalId)}`
   const trackClick = () => {
     fetch('/api/analytics/click', {
@@ -187,7 +132,7 @@ function Pagination({
   hasNext: boolean
   onPrev: () => void
   onNext: () => void
-  accent: 'amber' | 'indigo' | 'rose'
+  accent: ModeAccent
 }) {
   return (
     <div className="flex items-center justify-center gap-3 pt-8">
@@ -218,42 +163,12 @@ function Pagination({
 
 interface Filters {
   selectedGenres: string[]
-  showManga: boolean
   yearMin: string
   yearMax: string
   sort: 'trending' | 'title_asc' | 'title_desc' | 'year_desc' | 'year_asc' | 'score_desc'
 }
 
-const DEFAULT_FILTERS: Filters = { selectedGenres: [], showManga: true, yearMin: '', yearMax: '', sort: 'trending' }
-
-const BOOK_GENRES: GenreDef[] = [
-  { label: 'Roman', matches: ['fiction', 'novel', 'roman', 'literary'] },
-  { label: 'Fantasy', matches: ['fantasy', 'fantastique', 'fantaisie'] },
-  { label: 'Science-Fiction', matches: ['science fiction', 'sci-fi', 'science-fiction'] },
-  { label: 'Thriller / Policier', matches: ['thriller', 'mystery', 'crime', 'policier', 'detective'] },
-  { label: 'Romance', matches: ['romance', 'love stories'] },
-  { label: 'Biographie', matches: ['biography', 'memoir', 'autobiograph', 'biographie'] },
-  { label: 'Histoire', matches: ['history', 'historical', 'histoire'] },
-  { label: 'Horreur', matches: ['horror', 'horreur'] },
-  { label: 'Jeunesse', matches: ['young adult', 'juvenile', 'children', 'jeunesse'] },
-  { label: 'Humour', matches: ['humor', 'humour', 'comedy', 'comic'] },
-]
-
-const MANGA_GENRES: GenreDef[] = [
-  { label: 'Shōnen', matches: ['shounen', 'shonen', 'shōnen'] },
-  { label: 'Seinen', matches: ['seinen'] },
-  { label: 'Shōjo', matches: ['shoujo', 'shojo', 'shōjo'] },
-  { label: 'Josei', matches: ['josei'] },
-  { label: 'Action', matches: ['action'] },
-  { label: 'Aventure', matches: ['adventure', 'aventure'] },
-  { label: 'Comédie', matches: ['comedy', 'comédie'] },
-  { label: 'Drame', matches: ['drama', 'drame'] },
-  { label: 'Isekai', matches: ['isekai'] },
-  { label: 'Sports', matches: ['sports', 'sport'] },
-  { label: 'Slice of Life', matches: ['slice of life'] },
-  { label: 'Surnaturel', matches: ['supernatural', 'surnaturel'] },
-  { label: 'Mystère', matches: ['mystery', 'mystère', 'mystere'] },
-]
+const DEFAULT_FILTERS: Filters = { selectedGenres: [], yearMin: '', yearMax: '', sort: 'trending' }
 
 function CheckboxItem({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
   return (
@@ -276,9 +191,8 @@ function CheckboxItem({ label, checked, onChange }: { label: string; checked: bo
   )
 }
 
-function FilterBar({ mode, filters, onChange, accent }: { mode: NavMode; filters: Filters; onChange: (f: Filters) => void; accent: 'amber' | 'indigo' | 'rose' }) {
+function FilterBar({ mode, filters, onChange, accent }: { mode: NavMode; filters: Filters; onChange: (f: Filters) => void; accent: ModeAccent }) {
   const [open, setOpen] = useState(false)
-  const [mangaExpanded, setMangaExpanded] = useState(true)
 
   const toggleGenre = (label: string) => {
     const next = filters.selectedGenres.includes(label)
@@ -289,14 +203,11 @@ function FilterBar({ mode, filters, onChange, accent }: { mode: NavMode; filters
 
   const activeCount =
     filters.selectedGenres.length +
-    (!filters.showManga ? 1 : 0) +
     (filters.yearMin ? 1 : 0) +
     (filters.yearMax ? 1 : 0) +
     (filters.sort !== 'trending' ? 1 : 0)
 
-  // For book mode, only show book genres + manga section
-  // For other modes, show the flat genre list
-  const flatGenres = mode !== 'book' ? GENRE_LISTS[mode] : []
+  const flatGenres = GENRE_LISTS[mode]
 
   return (
     <div className="relative">
@@ -317,53 +228,42 @@ function FilterBar({ mode, filters, onChange, accent }: { mode: NavMode; filters
       {open && (
         <div className="absolute right-0 top-full z-50 mt-2 w-80 rounded-xl border bg-background shadow-lg p-4 space-y-4 max-h-[80vh] overflow-y-auto">
 
-          {/* Book mode: books + manga sections */}
           {mode === 'book' && (
-            <>
-              <div className="space-y-2">
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Livres</p>
-                <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
-                  {BOOK_GENRES.map((g) => (
-                    <CheckboxItem
-                      key={g.label}
-                      label={g.label}
-                      checked={filters.selectedGenres.includes(g.label)}
-                      onChange={() => toggleGenre(g.label)}
-                    />
-                  ))}
-                </div>
-              </div>
-
-              <div className="space-y-2 border-t pt-3">
-                <button
-                  onClick={() => setMangaExpanded((v) => !v)}
-                  className="flex w-full items-center justify-between"
-                >
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Livres</p>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+                {BOOK_GENRES.map((g) => (
                   <CheckboxItem
-                    label="Manga"
-                    checked={filters.showManga}
-                    onChange={(v) => onChange({ ...filters, showManga: v })}
+                    key={g.label}
+                    label={g.label}
+                    checked={filters.selectedGenres.includes(g.label)}
+                    onChange={() => toggleGenre(g.label)}
                   />
-                  <ChevronDown className={cn('h-3.5 w-3.5 text-muted-foreground transition-transform', mangaExpanded && 'rotate-180')} />
-                </button>
-                {mangaExpanded && filters.showManga && (
-                  <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 pl-6">
-                    {MANGA_GENRES.map((g) => (
-                      <CheckboxItem
-                        key={g.label}
-                        label={g.label}
-                        checked={filters.selectedGenres.includes(g.label)}
-                        onChange={() => toggleGenre(g.label)}
-                      />
-                    ))}
-                  </div>
-                )}
+                ))}
               </div>
-            </>
+            </div>
           )}
 
-          {/* Games / Movies: flat genre list */}
-          {mode !== 'book' && (
+          {mode === 'manga' && (
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Manga</p>
+              <p className="text-[11px] text-muted-foreground leading-snug">
+                Les cases affinent la requête côté Jikan (paramètre <code className="text-[10px]">genre</code>).
+              </p>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+                {MANGA_GENRES.map((g) => (
+                  <CheckboxItem
+                    key={g.label}
+                    label={g.label}
+                    checked={filters.selectedGenres.includes(g.label)}
+                    onChange={() => toggleGenre(g.label)}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {(mode === 'game' || mode === 'movie') && (
             <div className="space-y-2">
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Genre</p>
               <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
@@ -414,7 +314,8 @@ function FilterBar({ mode, filters, onChange, accent }: { mode: NavMode; filters
 // ─── Mode config ─────────────────────────────────────────────────────────────
 
 const MODE_CONFIG: { value: NavMode; label: string; Icon: React.ComponentType<{ className?: string }>; activeClass: string }[] = [
-  { value: 'book', label: 'Livres & Mangas', Icon: BookMarked, activeClass: 'bg-amber-600 text-white' },
+  { value: 'book', label: 'Livres', Icon: BookMarked, activeClass: 'bg-amber-600 text-white' },
+  { value: 'manga', label: 'Mangas', Icon: LibraryBig, activeClass: 'bg-violet-600 text-white' },
   { value: 'game', label: 'Jeux', Icon: Gamepad2, activeClass: 'bg-indigo-600 text-white' },
   { value: 'movie', label: 'Films', Icon: Film, activeClass: 'bg-rose-600 text-white' },
 ]
@@ -434,12 +335,12 @@ export default function CatalogPage() {
   const [trendingCounts, setTrendingCounts] = useState<Map<string, number>>(new Map())
   const prevMode = useRef(mode)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const ModeIcon = mode === 'book' ? BookMarked : mode === 'game' ? Gamepad2 : Film
+  const ModeIcon =
+    mode === 'book' ? BookMarked : mode === 'manga' ? LibraryBig : mode === 'game' ? Gamepad2 : Film
 
   const abortRef = useRef<AbortController | null>(null)
 
-  const fetchItems = useCallback((q: string, m: NavMode = mode, p = 1, showManga = true, selectedGenres: string[] = []) => {
-    // Cancel any in-flight request
+  const fetchItems = useCallback((q: string, m: NavMode = mode, p = 1, selectedGenres: string[] = []) => {
     abortRef.current?.abort()
     const controller = new AbortController()
     abortRef.current = controller
@@ -455,50 +356,62 @@ export default function CatalogPage() {
     }
 
     if (m === 'book') {
-      // When a search query is active, skip manga entirely (manga results pollute book searches)
-      const shouldFetchManga = showManga && !q
-      // Find the first selected genre from each group to pass server-side
       const bookGenre = selectedGenres.find((g) => BOOK_GENRES.some((b) => b.label === g))
-      const mangaGenre = selectedGenres.find((g) => MANGA_GENRES.some((b) => b.label === g))
-
-      const fetches: Promise<Response>[] = [
-        fetch(`/api/catalog/books?${buildParams({ genre: bookGenre })}`, { signal: controller.signal }),
-      ]
-      if (shouldFetchManga) {
-        fetches.push(fetch(`/api/catalog/manga?${buildParams({ genre: mangaGenre })}`, { signal: controller.signal }))
-      }
-
-      Promise.all(fetches.map((f) => f.then((r) => r.json())))
-        .then(([booksData, mangaData]) => {
-          if (q) {
-            // Search mode: show up to 24 book results, no manga
-            const books: CatalogItem[] = booksData?.items ?? []
-            setRawItems(books)
-            setHasNextPage(booksData?.hasMore ?? false)
-          } else {
-            // Trending/genre mode: interleave books and manga 12+12
-            const books: CatalogItem[] = (booksData?.items ?? []).slice(0, 12)
-            const manga: CatalogItem[] = shouldFetchManga ? (mangaData?.items ?? []).slice(0, 12) : []
-            const merged: CatalogItem[] = []
-            const len = Math.max(books.length, manga.length)
-            for (let i = 0; i < len; i++) {
-              if (i < books.length) merged.push(books[i])
-              if (i < manga.length) merged.push(manga[i])
-            }
-            setRawItems(merged)
-            setHasNextPage((booksData?.hasMore ?? false) || (shouldFetchManga && (mangaData?.hasMore ?? false)))
+      fetch(`/api/catalog/books?${buildParams({ genre: bookGenre })}`, { signal: controller.signal })
+        .then((r) => r.json())
+        .then((booksData: { items?: CatalogItem[]; hasMore?: boolean }) => {
+          if (isCatalogDebug()) {
+            catalogDebug('page/fetch livres (Google Books)', {
+              q: q || null,
+              page: p,
+              bookGenreApi: bookGenre ?? null,
+              booksJsonLen: booksData?.items?.length ?? 'missing',
+            })
           }
+          const books: CatalogItem[] = booksData?.items ?? []
+          setRawItems(books)
+          setHasNextPage(booksData?.hasMore ?? false)
+        })
+        .catch((e) => {
+          if (e?.name !== 'AbortError') {
+            catalogDebug('page/fetch livres ERROR', {
+              name: e?.name,
+              message: e instanceof Error ? e.message : String(e),
+            })
+            setRawItems([])
+            setHasNextPage(false)
+          }
+        })
+        .finally(() => {
           setLoading(false)
+        })
+    } else if (m === 'manga') {
+      const mangaGenre = selectedGenres.find((g) => MANGA_GENRES.some((b) => b.label === g))
+      fetch(`/api/catalog/manga?${buildParams({ genre: mangaGenre })}`, { signal: controller.signal })
+        .then((r) => r.json())
+        .then((mangaData: { items?: CatalogItem[]; hasMore?: boolean }) => {
+          if (isCatalogDebug()) {
+            catalogDebug('page/fetch mangas (Jikan)', {
+              q: q || null,
+              page: p,
+              mangaGenreApi: mangaGenre ?? null,
+              mangaJsonLen: mangaData?.items?.length ?? 'missing',
+            })
+          }
+          const manga: CatalogItem[] = mangaData?.items ?? []
+          setRawItems(manga)
+          setHasNextPage(mangaData?.hasMore ?? false)
         })
         .catch((e) => {
           if (e?.name !== 'AbortError') {
             setRawItems([])
             setHasNextPage(false)
-            setLoading(false)
           }
         })
+        .finally(() => {
+          setLoading(false)
+        })
     } else {
-      // For games and movies, pass first selected genre to the API
       const genre = selectedGenres[0]
       const base = m === 'game' ? '/api/catalog/games' : '/api/catalog/movies'
       fetch(`${base}?${buildParams({ genre })}`, { signal: controller.signal })
@@ -540,26 +453,16 @@ export default function CatalogPage() {
     setQuery('')
     setFilters(DEFAULT_FILTERS)
     setPage(1)
-    fetchItems('', mode, 1, true, [])
+    fetchItems('', mode, 1, [])
     fetchTrending(mode)
   }, [mode, fetchItems, fetchTrending])
 
   // Initial fetch
   useEffect(() => {
-    fetchItems('', mode, 1, true, [])
+    fetchItems('', mode, 1, [])
     fetchTrending(mode)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-
-  // Re-fetch when showManga toggled (only for book mode)
-  const prevShowManga = useRef(true)
-  useEffect(() => {
-    if (mode !== 'book') return
-    if (prevShowManga.current === filters.showManga) return
-    prevShowManga.current = filters.showManga
-    setPage(1)
-    fetchItems(query, mode, 1, filters.showManga, filters.selectedGenres)
-  }, [filters.showManga, mode, query, fetchItems, filters.selectedGenres])
 
   // Debounced search
   useEffect(() => {
@@ -567,10 +470,10 @@ export default function CatalogPage() {
     if (query.length === 1) return
     debounceRef.current = setTimeout(() => {
       setPage(1)
-      fetchItems(query, mode, 1, filters.showManga, filters.selectedGenres)
+      fetchItems(query, mode, 1, filters.selectedGenres)
     }, 600)
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
-  }, [query, fetchItems, mode, filters.showManga])
+  }, [query, fetchItems, mode, filters.selectedGenres])
 
   // Re-fetch server-side when genre selection changes (no search query active)
   const prevGenresRef = useRef<string[]>([])
@@ -582,34 +485,42 @@ export default function CatalogPage() {
     // Only trigger server-side genre fetch when there's no active query
     if (query) return
     setPage(1)
-    fetchItems('', mode, 1, filters.showManga, curr)
-  }, [filters.selectedGenres, query, mode, fetchItems, filters.showManga])
+    fetchItems('', mode, 1, curr)
+  }, [filters.selectedGenres, query, mode, fetchItems])
 
   const handlePageChange = (newPage: number) => {
     setPage(newPage)
-    fetchItems(query, mode, newPage, filters.showManga, filters.selectedGenres)
+    fetchItems(query, mode, newPage, filters.selectedGenres)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   // Client-side filters + sort (applied on top of paginated server results)
   const items = useMemo(() => {
+    const rawBooks = rawItems.filter((it) => it.type === 'book').length
+    const rawManga = rawItems.filter((it) => it.type === 'manga').length
     let result = [...rawItems]
 
-    // Exclude manga when showManga is false (they may have been pre-fetched but should not show)
-    if (!filters.showManga) {
-      result = result.filter((it) => it.type !== 'manga')
-    }
-
     if (filters.selectedGenres.length > 0) {
-      const allGenreDefs = mode === 'book' ? [...BOOK_GENRES, ...MANGA_GENRES] : GENRE_LISTS[mode]
-      result = result.filter((it) => {
-        if (!filters.showManga && it.type === 'manga') return false
-        const allGenres = [...(it.genres ?? []), it.genre ?? ''].map((g) => g.toLowerCase())
-        return filters.selectedGenres.some((label) => {
-          const def = allGenreDefs.find((g) => g.label === label)
-          return def?.matches.some((m) => allGenres.some((g) => g.includes(m))) ?? false
+      if (mode === 'book') {
+        // Google Books : le genre est déjà passé à l’API ; ne pas refiltrer côté client.
+      } else if (mode === 'manga') {
+        result = result.filter((it) => {
+          const allGenres = [...(it.genres ?? []), it.genre ?? ''].map((g) => g.toLowerCase())
+          return filters.selectedGenres.some((label) => {
+            const def = MANGA_GENRES.find((d) => d.label === label)
+            return def?.matches.some((m) => allGenres.some((g) => g.includes(m))) ?? false
+          })
         })
-      })
+      } else {
+        const allGenreDefs = GENRE_LISTS[mode]
+        result = result.filter((it) => {
+          const allGenres = [...(it.genres ?? []), it.genre ?? ''].map((g) => g.toLowerCase())
+          return filters.selectedGenres.some((label) => {
+            const def = allGenreDefs.find((g) => g.label === label)
+            return def?.matches.some((m) => allGenres.some((g) => g.includes(m))) ?? false
+          })
+        })
+      }
     }
     if (filters.yearMin) {
       const min = Number.parseInt(filters.yearMin, 10)
@@ -643,8 +554,25 @@ export default function CatalogPage() {
         return sb - sa
       })
     }
+
+    if (isCatalogDebug() && (mode === 'book' || mode === 'manga')) {
+      catalogDebug('page/useMemo items (après filtres client)', {
+        rawTotal: rawItems.length,
+        rawByType: { book: rawBooks, manga: rawManga },
+        afterFilters: result.length,
+        afterByType: {
+          book: result.filter((it) => it.type === 'book').length,
+          manga: result.filter((it) => it.type === 'manga').length,
+        },
+        selectedGenres: filters.selectedGenres,
+        yearMin: filters.yearMin || null,
+        yearMax: filters.yearMax || null,
+        sort: filters.sort,
+      })
+    }
+
     return result
-  }, [rawItems, filters, trendingCounts])
+  }, [rawItems, filters, trendingCounts, mode])
 
   return (
     <div className="min-h-screen">
@@ -673,7 +601,15 @@ export default function CatalogPage() {
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder={mode === 'book' ? 'Rechercher un livre, manga, auteur…' : mode === 'game' ? 'Rechercher un jeu (ex: Fallout 3)…' : 'Rechercher un film…'}
+                placeholder={
+                  mode === 'book'
+                    ? 'Rechercher un livre…'
+                    : mode === 'manga'
+                      ? 'Rechercher un manga…'
+                      : mode === 'game'
+                        ? 'Rechercher un jeu (ex: Fallout 3)…'
+                        : 'Rechercher un film…'
+                }
                 className="w-full rounded-lg border bg-background py-2 pl-9 pr-9 text-sm outline-none focus:ring-2 focus:ring-offset-1 transition"
               />
               {query && (
@@ -694,7 +630,15 @@ export default function CatalogPage() {
           <ModeIcon className={cn('h-6 w-6', `text-${accent}-600`)} />
           <div>
             <h1 className="text-xl font-bold tracking-tight flex items-center gap-2">
-              {query ? `Résultats pour "${query}"` : mode === 'book' ? 'Catalogue — Livres & Mangas' : mode === 'game' ? 'Catalogue — Jeux vidéo' : 'Catalogue — Films'}
+              {query
+                ? `Résultats pour "${query}"`
+                : mode === 'book'
+                  ? 'Catalogue — Livres'
+                  : mode === 'manga'
+                    ? 'Catalogue — Mangas'
+                    : mode === 'game'
+                      ? 'Catalogue — Jeux vidéo'
+                      : 'Catalogue — Films'}
               {!query && filters.sort === 'trending' && (
                 <span className="inline-flex items-center gap-1 rounded-full bg-orange-100 px-2 py-0.5 text-xs font-medium text-orange-700">
                   <TrendingUp className="h-3 w-3" />
@@ -727,6 +671,12 @@ export default function CatalogPage() {
                   if (hasActiveFilters) return 'Aucun résultat pour ces filtres'
                   if (mode === 'movie') return 'Ajoutez TMDB_API_KEY dans .env.local pour les films'
                   if (mode === 'game') return 'Ajoutez RAWG_API_KEY dans .env.local pour tous les jeux'
+                  if (mode === 'book') {
+                    return 'Aucun livre renvoyé par Google Books (souvent quota 429 sans clé API). Ajoute GOOGLE_BOOKS_API_KEY dans .env.local puis redémarre le serveur, ou réessaie plus tard.'
+                  }
+                  if (mode === 'manga') {
+                    return 'Aucun manga renvoyé par Jikan (réseau, limite ou filtres trop stricts). Réessaie plus tard ou assouplis les filtres.'
+                  }
                   return 'Aucun résultat'
                 })()}
               </p>

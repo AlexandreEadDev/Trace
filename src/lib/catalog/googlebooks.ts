@@ -1,12 +1,26 @@
 /**
- * Google Books — used exclusively for SEARCH (not trending).
- * Google Books has excellent search relevance; its trending/discovery
- * is poor (returns archives, academic texts, unknown content).
- * Trending is handled by Open Library's real-time popularity endpoint.
+ * Google Books — romans : recherche, filtres par genre, et tendances catalogue
+ * (parcours type « fiction populaire » quand il n’y a pas de requête utilisateur).
+ *
+ * Quota : sans clé, Google renvoie souvent **429** (IP / dev partagé) → liste vide.
+ * Ajoute `GOOGLE_BOOKS_API_KEY` dans `.env.local` (API Books, quota ~1000 req/j gratuit).
  */
 import type { CatalogItem } from './types'
+import { catalogDebug, isCatalogDebug } from './debugLog'
 
 const BASE = 'https://www.googleapis.com/books/v1/volumes'
+
+function applyGoogleBooksKey(url: string): string {
+  const key = process.env.GOOGLE_BOOKS_API_KEY?.trim()
+  if (!key) return url
+  const u = new URL(url)
+  u.searchParams.set('key', key)
+  return u.toString()
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
 
 async function fetchSafe(url: string, ms = 8000): Promise<Response> {
   const controller = new AbortController()
@@ -16,6 +30,26 @@ async function fetchSafe(url: string, ms = 8000): Promise<Response> {
   } finally {
     clearTimeout(id)
   }
+}
+
+/** Requêtes Google Books avec clé API optionnelle + backoff sur 429 / 503. */
+async function fetchGoogleBooks(url: string, ms = 12000): Promise<Response> {
+  const keyed = applyGoogleBooksKey(url)
+  const maxAttempts = 4
+  let last: Response | null = null
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const res = await fetchSafe(keyed, ms)
+    last = res
+    if (res.ok) return res
+    if (res.status !== 429 && res.status !== 503) return res
+    if (isCatalogDebug()) {
+      catalogDebug('googlebooks.retry', { attempt: attempt + 1, status: res.status })
+    }
+    if (attempt < maxAttempts - 1) {
+      await sleep(800 * 2 ** attempt)
+    }
+  }
+  return last!
 }
 
 /**
@@ -36,19 +70,20 @@ function bookPopularity(info: any): number {
 function volumeToItem(v: any): CatalogItem | null {
   const info = v?.volumeInfo
   if (!info?.title) return null
-  if (!Array.isArray(info.authors) || info.authors.length === 0) return null
+
+  const authors: string[] =
+    Array.isArray(info.authors) && info.authors.length > 0 ? (info.authors as string[]) : ['—']
 
   const cover = info.imageLinks?.thumbnail ?? info.imageLinks?.smallThumbnail ?? null
-  if (!cover) return null
-
+  const coverUrl = cover
+    ? cover
+        .replace('http://', 'https://')
+        .replace(/&zoom=\d/, '&zoom=2')
+        .replace(/zoom=\d&/, 'zoom=2&')
+    : null
   const year = info.publishedDate
     ? Number.parseInt(String(info.publishedDate).slice(0, 4), 10)
     : null
-
-  const coverUrl = cover
-    .replace('http://', 'https://')
-    .replace(/&zoom=\d/, '&zoom=2')
-    .replace(/zoom=\d&/, 'zoom=2&')
 
   // Flatten "Fiction / Fantasy" → ["Fiction", "Fantasy"] for richer genre matching
   const rawCategories: string[] = Array.isArray(info.categories) ? info.categories : []
@@ -69,7 +104,7 @@ function volumeToItem(v: any): CatalogItem | null {
     genres: genres.length > 0 ? genres : undefined,
     coverUrl,
     releaseYear: Number.isNaN(year) ? null : year,
-    authors: info.authors as string[],
+    authors,
     popularityScore: bookPopularity(info),
     description,
   }
@@ -121,9 +156,30 @@ async function fetchVolumes(query: string, startIndex: number, maxResults: numbe
   url.searchParams.set('printType', 'books')
   if (useFilter) url.searchParams.set('filter', 'paid-ebooks')
 
-  const res = await fetchSafe(url.toString())
-  if (!res.ok) return { items: [], totalItems: 0 }
+  const res = await fetchGoogleBooks(url.toString())
+  if (!res.ok) {
+    if (isCatalogDebug()) {
+      catalogDebug('googlebooks.fetchVolumes', {
+        query,
+        startIndex,
+        httpStatus: res.status,
+        ok: false,
+        hasApiKey: Boolean(process.env.GOOGLE_BOOKS_API_KEY?.trim()),
+      })
+    }
+    return { items: [], totalItems: 0 }
+  }
   const data = await res.json()
+  if (data?.error) {
+    if (isCatalogDebug()) {
+      catalogDebug('googlebooks.fetchVolumes', {
+        query,
+        apiError: data.error?.message ?? data.error,
+        code: data.error?.code,
+      })
+    }
+    return { items: [], totalItems: 0 }
+  }
   const totalItems: number = typeof data.totalItems === 'number' ? data.totalItems : 0
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -140,8 +196,20 @@ async function fetchVolumes(query: string, startIndex: number, maxResults: numbe
       return idA.localeCompare(idB)
     })
   }
-  const items = dedupeBooks(volumes.map(volumeToItem).filter(Boolean) as CatalogItem[])
-  return { items, totalItems }
+  const mapped = volumes.map(volumeToItem)
+  const kept = dedupeBooks(mapped.filter(Boolean) as CatalogItem[])
+  if (isCatalogDebug()) {
+    catalogDebug('googlebooks.fetchVolumes', {
+      query,
+      startIndex,
+      httpStatus: res.status,
+      rawVolumes: volumes.length,
+      mappedNull: mapped.filter((x) => x === null).length,
+      afterDedupe: kept.length,
+      totalItems,
+    })
+  }
+  return { items: kept, totalItems }
 }
 
 export async function searchBooks(query: string, limit = 24, page = 1, genre?: string): Promise<PagedResult> {
@@ -163,20 +231,13 @@ export async function searchBooks(query: string, limit = 24, page = 1, genre?: s
   try {
     const finalQuery = effectiveQuery || 'popular fiction'
     const keepOrder = isSearch
-    let { items, totalItems } = await fetchVolumes(finalQuery, startIndex, 40, true, keepOrder)
-
-    if (items.length < Math.ceil(limit / 2)) {
-      const fallback = await fetchVolumes(finalQuery, startIndex, 40, false, keepOrder)
-      if (fallback.items.length > items.length) {
-        items = fallback.items
-        totalItems = fallback.totalItems
-      }
-    }
+    // Ne pas utiliser filter=paid-ebooks : il vide souvent les résultats (région / quota).
+    const { items, totalItems } = await fetchVolumes(finalQuery, startIndex, 40, false, keepOrder)
 
     // After dedupe we may have fewer than `limit` items. Pad with a second page
     // so the catalog always shows exactly 24 cards when results exist upstream.
     if (items.length < limit && startIndex + 40 < totalItems) {
-      const extra = await fetchVolumes(finalQuery, startIndex + 40, 40, true, keepOrder)
+      const extra = await fetchVolumes(finalQuery, startIndex + 40, 40, false, keepOrder)
       const seen = new Set(items.map((it) => `${normTitle(it.title)}|${(it.authors?.[0] ?? '').toLowerCase().slice(0, 20)}`))
       for (const it of extra.items) {
         const key = `${normTitle(it.title)}|${(it.authors?.[0] ?? '').toLowerCase().slice(0, 20)}`
@@ -189,19 +250,33 @@ export async function searchBooks(query: string, limit = 24, page = 1, genre?: s
     }
 
     const hasMore = startIndex + items.length < totalItems
-    return { items: items.slice(0, limit), hasMore }
-  } catch {
+    const sliced = items.slice(0, limit)
+    if (isCatalogDebug()) {
+      catalogDebug('googlebooks.searchBooks', {
+        query: normalizedQuery,
+        genre: genre ?? null,
+        page,
+        finalQuery,
+        isSearch,
+        itemCount: sliced.length,
+        hasMore,
+        firstTitles: sliced.slice(0, 5).map((it) => it.title),
+      })
+    }
+    return { items: sliced, hasMore }
+  } catch (err) {
+    if (isCatalogDebug()) {
+      catalogDebug('googlebooks.searchBooks ERROR', {
+        message: err instanceof Error ? err.message : String(err),
+      })
+    }
     return { items: [], hasMore: false }
   }
 }
 
 /**
- * Hybrid resolver: given a book identified by OpenLibrary (title + optional authors/year),
- * find the best matching Google Books volume so we can leverage GB's richer metadata
- * (description, categories, seriesInfo) for the detail page and recommendations.
- *
- * Returns null if no acceptable match is found. The caller should keep the original
- * OpenLibrary externalSource/externalId for persistence; only the metadata is merged.
+ * Résout un volume Google Books à partir du titre (+ auteur / année optionnels)
+ * pour enrichir une fiche (description, catégories, série).
  */
 export async function findBookByTitleAuthor(
   title: string,
@@ -224,9 +299,10 @@ export async function findBookByTitleAuthor(
     url.searchParams.set('orderBy', 'relevance')
     url.searchParams.set('printType', 'books')
 
-    const res = await fetchSafe(url.toString())
+    const res = await fetchGoogleBooks(url.toString())
     if (!res.ok) return null
     const data = await res.json()
+    if (data?.error) return null
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const volumes: any[] = data.items ?? []
     const candidates = volumes.map(volumeToItem).filter(Boolean) as CatalogItem[]
@@ -277,9 +353,10 @@ export async function getBookDetailById(volumeId: string): Promise<CatalogItem |
 
 export async function getBookByExternalId(externalId: string): Promise<CatalogItem | null> {
   try {
-    const res = await fetchSafe(`${BASE}/${encodeURIComponent(externalId)}`)
+    const res = await fetchGoogleBooks(`${BASE}/${encodeURIComponent(externalId)}`)
     if (!res.ok) return null
     const v = await res.json()
+    if (v?.error) return null
 
     const item = volumeToItem(v)
     if (!item) return null
@@ -317,9 +394,10 @@ export async function getSimilarBooks(authors?: string[], genre?: string | null)
     url.searchParams.set('orderBy', 'relevance')
     url.searchParams.set('printType', 'books')
 
-    const res = await fetchSafe(url.toString())
+    const res = await fetchGoogleBooks(url.toString())
     if (!res.ok) return []
     const data = await res.json()
+    if (data?.error) return []
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const volumes: any[] = data.items ?? []
     return dedupeBooks(
@@ -380,9 +458,10 @@ export async function getBookSeries(
     url.searchParams.set('orderBy', 'relevance')
     url.searchParams.set('printType', 'books')
 
-    const res = await fetchSafe(url.toString())
+    const res = await fetchGoogleBooks(url.toString())
     if (!res.ok) return []
     const data = await res.json()
+    if (data?.error) return []
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const volumes: any[] = data.items ?? []
     return dedupeBooks(

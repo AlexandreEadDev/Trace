@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils'
 interface RelatedItemsProps {
   items: CatalogItem[]
   title?: string
-  accent: 'amber' | 'indigo' | 'rose' | 'pink'
+  accent: 'amber' | 'violet' | 'indigo' | 'rose' | 'pink'
 }
 
 function MiniCard({ item, accent }: { item: CatalogItem; accent: RelatedItemsProps['accent'] }) {

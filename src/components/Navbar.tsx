@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
-import { Crosshair, LayoutDashboard, LogIn, LogOut, Library, Menu, X } from 'lucide-react'
+import { Crosshair, Compass, LayoutDashboard, LogIn, LogOut, Library, Menu, X } from 'lucide-react'
 import type { User } from '@supabase/supabase-js'
 import { ModeSwitch } from './ModeSwitch'
 import { useMode } from '@/context/ModeContext'
@@ -47,16 +47,16 @@ export function Navbar() {
   return (
     <nav className="sticky top-0 z-50 border-b bg-background/80 backdrop-blur-md">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-        <div className="relative flex h-14 items-center justify-between gap-3 sm:h-16">
-          {/* Logo */}
-          <Link href="/" className="flex shrink-0 items-center gap-2">
-            <Crosshair className={cn('h-5 w-5 sm:h-6 sm:w-6', `text-${accent}-600`)} />
-            <span className="text-lg font-bold tracking-tight sm:text-xl">Trace</span>
-          </Link>
-
-          {/* Center: mode toggle (truly centered in header) */}
-          <div className="absolute left-1/2 hidden -translate-x-1/2 md:flex">
-            <ModeSwitch />
+        <div className="flex h-14 items-center justify-between gap-2 sm:h-16 sm:gap-3">
+          {/* Gauche : logo + modes Livres / Jeux / Films (tablette & PC) */}
+          <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3 md:gap-10 lg:gap-12">
+            <Link href="/" className="flex shrink-0 items-center gap-2">
+              <Crosshair className={cn('h-5 w-5 sm:h-6 sm:w-6', `text-${accent}-600`)} />
+              <span className="text-lg font-bold tracking-tight sm:text-xl">Trace</span>
+            </Link>
+            <div className="hidden min-w-0 md:block">
+              <ModeSwitch />
+            </div>
           </div>
 
           {/* Right actions (desktop) */}
@@ -72,6 +72,19 @@ export function Navbar() {
             >
               <Library className="h-4 w-4" />
               <span className="hidden lg:inline">Catalogue</span>
+            </Link>
+
+            <Link
+              href="/discover"
+              className={cn(
+                'inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-sm font-medium transition-colors',
+                pathname === '/discover'
+                  ? `text-${accent}-600 bg-${accent}-50`
+                  : 'hover:bg-muted'
+              )}
+            >
+              <Compass className="h-4 w-4" />
+              <span className="hidden lg:inline">Découvrir</span>
             </Link>
 
             {user ? (
@@ -132,6 +145,19 @@ export function Navbar() {
               >
                 <Library className="h-4 w-4" />
                 Catalogue
+              </Link>
+
+              <Link
+                href="/discover"
+                className={cn(
+                  'inline-flex items-center gap-2 rounded-lg px-3 py-2 font-medium transition-colors',
+                  pathname === '/discover'
+                    ? `bg-${accent}-50 text-${accent}-700`
+                    : 'hover:bg-muted'
+                )}
+              >
+                <Compass className="h-4 w-4" />
+                Découvrir
               </Link>
 
               {user ? (

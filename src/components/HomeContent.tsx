@@ -2,9 +2,10 @@
 
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { BookOpen, Gamepad2, Film, Star, ArrowRight, Search, Trophy, TrendingUp, Sparkles } from 'lucide-react'
+import { BookOpen, LibraryBig, Gamepad2, Film, Star, ArrowRight, Search, Trophy, TrendingUp, Sparkles } from 'lucide-react'
 import { useMode } from '@/context/ModeContext'
 import type { NavMode } from '@/context/ModeContext'
+import type { ModeAccent } from '@/context/ModeContext'
 import { createClient } from '@/lib/supabase/client'
 import { cn } from '@/lib/utils'
 import { encodeCatalogId } from '@/lib/catalog/types'
@@ -30,6 +31,22 @@ const MODE_CONFIG = {
     ctaDesc: 'Des milliers de titres accessibles, notables et sauvegardables.',
     ctaBg: 'bg-amber-50 border-amber-100',
     apiEndpoint: '/api/catalog/books',
+  },
+  manga: {
+    Icon: LibraryBig,
+    label: 'Mangathèque',
+    tagline: 'Explore des mangas, note tes lectures, suis les volumes.',
+    heroName: 'Trace',
+    gradient: 'from-violet-50 via-white to-purple-50',
+    badge: 'bg-violet-100 text-violet-700',
+    btn: 'bg-violet-600 hover:bg-violet-700',
+    iconBg: 'bg-violet-600 -rotate-3',
+    trendTitle: '📖 Tendances — Mangas',
+    bestTitle: '🏆 Mieux notés — Mangas',
+    ctaTitle: 'Cherche ton prochain manga',
+    ctaDesc: 'Titres Jikan, notables et sauvegardables dans ton journal.',
+    ctaBg: 'bg-violet-50 border-violet-100',
+    apiEndpoint: '/api/catalog/manga',
   },
   game: {
     Icon: Gamepad2,
@@ -102,7 +119,7 @@ function CatalogCard({
   onTrack,
 }: {
   item: CatalogItem
-  accent: 'amber' | 'indigo' | 'rose'
+  accent: ModeAccent
   onTrack?: (id: string) => void
 }) {
   const href = `/item/${encodeCatalogId(item.externalSource, item.externalId)}`
@@ -165,7 +182,7 @@ function BestCard({
   rank,
 }: {
   item: ItemWithReviews
-  accent: 'amber' | 'indigo' | 'rose'
+  accent: ModeAccent
   rank: number
 }) {
   const [imgError, setImgError] = useState(false)
@@ -234,7 +251,7 @@ function ScrollRow({ children }: { children: React.ReactNode }) {
   )
 }
 
-function SectionHeader({ title, href, accent }: { title: string; href?: string; accent: 'amber' | 'indigo' | 'rose' }) {
+function SectionHeader({ title, href, accent }: { title: string; href?: string; accent: ModeAccent }) {
   return (
     <div className="flex items-center justify-between mb-4">
       <h2 className="text-lg font-bold tracking-tight">{title}</h2>
@@ -278,17 +295,27 @@ export function HomeContent() {
     setTrending([])
 
     // Fetch catalog items and trending counts in parallel
-    const itemsFetch = fetch(cfg.apiEndpoint, { signal: controller.signal })
-      .then((r) => r.json())
-      .then((data) => {
-        const raw: CatalogItem[] = Array.isArray(data) ? data : data?.items ?? []
-        // Sort by external popularity score immediately, even before click data arrives
+    const itemsFetch = (async (): Promise<CatalogItem[]> => {
+      try {
+        let raw: CatalogItem[] = []
+        if (mode === 'book' || mode === 'manga') {
+          const r = await fetch(`${cfg.apiEndpoint}?page=1`, { signal: controller.signal })
+          const data = await r.json()
+          raw = Array.isArray(data) ? data : (data?.items ?? [])
+        } else {
+          const r = await fetch(cfg.apiEndpoint, { signal: controller.signal })
+          const data = await r.json()
+          raw = Array.isArray(data) ? data : data?.items ?? []
+        }
         const items = [...raw].sort((a, b) => (b.popularityScore ?? 0) - (a.popularityScore ?? 0))
         setTrending(items)
         setLoadingTrending(false)
         return items
-      })
-      .catch((e) => { if (e?.name !== 'AbortError') setLoadingTrending(false) })
+      } catch (e) {
+        if ((e as { name?: string })?.name !== 'AbortError') setLoadingTrending(false)
+        return []
+      }
+    })()
 
     // Fetch Trace trending counts to reorder
     fetch(`/api/analytics/trending?type=${mode}&limit=100`, { signal: controller.signal })
@@ -316,7 +343,7 @@ export function HomeContent() {
       .catch(() => {})
 
     return () => controller.abort()
-  }, [cfg.apiEndpoint, mode])
+  }, [cfg, mode])
 
   useEffect(() => {
     let cancelled = false
@@ -445,7 +472,7 @@ export function HomeContent() {
 
     run().catch(() => { if (!cancelled) setLoadingRecs(false) })
     return () => { cancelled = true }
-  }, [mode, cfg.apiEndpoint])
+  }, [mode, cfg])
 
   const bestItems = computeBest(rawItems)
 
@@ -529,8 +556,10 @@ export function HomeContent() {
                   {mode === 'movie'
                     ? 'Ajoutez TMDB_API_KEY dans .env.local pour les films.'
                     : mode === 'game'
-                    ? 'Ajoutez RAWG_API_KEY dans .env.local pour tous les jeux.'
-                    : 'Impossible de charger les tendances.'}
+                      ? 'Ajoutez RAWG_API_KEY dans .env.local pour tous les jeux.'
+                      : mode === 'manga'
+                        ? 'Impossible de charger les mangas (Jikan ou réseau). Réessaie plus tard.'
+                        : 'Impossible de charger les tendances.'}
                 </p>
               )}
           </ScrollRow>

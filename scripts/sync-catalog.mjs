@@ -15,61 +15,138 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 })
 
-const OPEN_LIBRARY_SUBJECTS = [
+// Même clé que Next.js (`GOOGLE_BOOKS_API_KEY`) pour éviter le 429 sur le sync.
+const GOOGLE_KEY = process.env.GOOGLE_BOOKS_API_KEY?.trim()
+
+const GOOGLE_SUBJECTS = [
+  'fiction',
   'fantasy',
-  'science_fiction',
-  'mystery',
-  'historical_fiction',
+  'science+fiction',
   'romance',
+  'mystery',
+  'thriller',
+  'biography',
+  'history',
+  'juvenile',
+  'horror',
 ]
 
-async function fetchOpenLibraryBooks(limitPerSubject = 80) {
-  const books = []
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms))
+}
 
-  for (const subject of OPEN_LIBRARY_SUBJECTS) {
-    const url = new URL(`https://openlibrary.org/subjects/${subject}.json`)
-    url.searchParams.set('limit', String(limitPerSubject))
+function volumeToBookRow(v) {
+  const info = v?.volumeInfo
+  if (!info?.title) return null
+  if (!Array.isArray(info.authors) || info.authors.length === 0) return null
+  const cover = info.imageLinks?.thumbnail ?? info.imageLinks?.smallThumbnail ?? null
+  if (!cover) return null
+  const year = info.publishedDate
+    ? Number.parseInt(String(info.publishedDate).slice(0, 4), 10)
+    : null
+  const rawCategories = Array.isArray(info.categories) ? info.categories : []
+  const genre =
+    rawCategories.length > 0 ? String(rawCategories[0]).split(' / ')[0].trim() : null
 
-    const response = await fetch(url)
+  return {
+    title: info.title,
+    type: 'book',
+    genre,
+    cover_url: cover.replace(/^http:\/\//, 'https://'),
+    release_year: Number.isNaN(year) ? null : year,
+    external_source: 'googlebooks',
+    external_id: String(v.id),
+  }
+}
+
+async function fetchGoogleBooksCatalog() {
+  const byId = new Map()
+  for (const subject of GOOGLE_SUBJECTS) {
+    const url = new URL('https://www.googleapis.com/books/v1/volumes')
+    url.searchParams.set('q', `subject:${subject}`)
+    url.searchParams.set('maxResults', '40')
+    url.searchParams.set('printType', 'books')
+    url.searchParams.set('orderBy', 'relevance')
+    if (GOOGLE_KEY) url.searchParams.set('key', GOOGLE_KEY)
+
+    const response = await fetch(url.toString())
     if (!response.ok) {
-      console.warn(
-        `Open Library subject ${subject} failed with status ${response.status}`
-      )
+      console.warn(`Google Books subject "${subject}" failed: ${response.status}`)
+      await sleep(300)
       continue
     }
-
     const payload = await response.json()
-    const works = payload.works ?? []
-
-    for (const work of works) {
-      if (!work?.key || !work?.title) continue
-
-      const releaseYear =
-        typeof work.first_publish_year === 'number'
-          ? work.first_publish_year
-          : null
-      const coverUrl =
-        typeof work.cover_id === 'number'
-          ? `https://covers.openlibrary.org/b/id/${work.cover_id}-L.jpg`
-          : null
-      const primaryGenre =
-        Array.isArray(work.subject) && work.subject.length > 0
-          ? work.subject[0]
-          : subject.replaceAll('_', ' ')
-
-      books.push({
-        title: work.title,
-        type: 'book',
-        genre: primaryGenre,
-        cover_url: coverUrl,
-        release_year: releaseYear,
-        external_source: 'openlibrary',
-        external_id: work.key,
-      })
+    for (const v of payload.items ?? []) {
+      const row = volumeToBookRow(v)
+      if (row) byId.set(row.external_id, row)
     }
+    await sleep(250)
   }
+  return [...byId.values()]
+}
 
-  return books
+function mangaToRow(m) {
+  if (!m?.mal_id) return null
+  const rating = m.rating ?? ''
+  if (rating.includes('Rx') || String(rating).toLowerCase().includes('hentai')) return null
+  const genreNames = [
+    ...(m.genres ?? []).map((g) => g.name),
+    ...(m.explicit_genres ?? []).map((g) => g.name),
+  ]
+  if (genreNames.some((g) => ['Hentai', 'Erotica'].includes(g))) return null
+
+  const title = m.title_english || m.title
+  const cover = m.images?.jpg?.large_image_url ?? m.images?.jpg?.image_url ?? null
+  if (!title || !cover) return null
+
+  const year = m.published?.prop?.from?.year ?? m.year ?? null
+
+  const demographic =
+    Array.isArray(m.demographics) && m.demographics.length > 0
+      ? m.demographics[0].name
+      : null
+  const genre =
+    demographic ??
+    (Array.isArray(m.genres) && m.genres.length > 0 ? m.genres[0].name : null)
+
+  return {
+    title,
+    type: 'manga',
+    genre,
+    cover_url: cover,
+    release_year: typeof year === 'number' && !Number.isNaN(year) ? year : null,
+    external_source: 'jikan',
+    external_id: String(m.mal_id),
+  }
+}
+
+async function fetchJikanTopManga(maxPages = 10) {
+  const rows = []
+  const seen = new Set()
+  for (let page = 1; page <= maxPages; page++) {
+    const url = new URL('https://api.jikan.moe/v4/top/manga')
+    url.searchParams.set('type', 'manga')
+    url.searchParams.set('sfw', 'true')
+    url.searchParams.set('limit', '25')
+    url.searchParams.set('page', String(page))
+
+    const response = await fetch(url.toString())
+    if (!response.ok) {
+      console.warn(`Jikan top/manga page ${page} failed: ${response.status}`)
+      break
+    }
+    const payload = await response.json()
+    for (const m of payload.data ?? []) {
+      const row = mangaToRow(m)
+      if (row && !seen.has(row.external_id)) {
+        seen.add(row.external_id)
+        rows.push(row)
+      }
+    }
+    if (!payload.pagination?.has_next_page) break
+    await sleep(400)
+  }
+  return rows
 }
 
 async function fetchFreeToGameCatalog() {
@@ -113,14 +190,14 @@ async function upsertItems(items, label) {
 }
 
 async function run() {
-  console.log('Sync started...')
+  console.log('Sync started (Google Books romans + Jikan mangas + jeux FreeToGame)...')
 
-  const [books, games] = await Promise.all([
-    fetchOpenLibraryBooks(),
-    fetchFreeToGameCatalog(),
-  ])
+  const novelRows = await fetchGoogleBooksCatalog()
+  const mangaRows = await fetchJikanTopManga()
+  const games = await fetchFreeToGameCatalog()
 
-  await upsertItems(books, 'book')
+  await upsertItems(novelRows, 'book (googlebooks)')
+  await upsertItems(mangaRows, 'manga (jikan)')
   await upsertItems(games, 'game')
 
   console.log('Sync completed.')

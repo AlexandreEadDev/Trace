@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { Star } from 'lucide-react'
 import { useMode } from '@/context/ModeContext'
+import type { ModeAccent } from '@/context/ModeContext'
 import { cn } from '@/lib/utils'
 import type { ItemWithReviews } from '@/types'
 
@@ -16,7 +17,7 @@ function CoverPlaceholder({
   accent,
 }: {
   title: string
-  accent: 'amber' | 'indigo' | 'rose'
+  accent: ModeAccent
 }) {
   return (
     <div

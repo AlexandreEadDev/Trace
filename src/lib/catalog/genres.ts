@@ -9,7 +9,7 @@ export interface GenreDef {
   matches: string[]
 }
 
-export type CatalogMode = 'book' | 'game' | 'movie'
+export type CatalogMode = 'book' | 'manga' | 'game' | 'movie'
 
 export const BOOK_GENRES: GenreDef[] = [
   { label: 'Roman', matches: ['fiction', 'novel', 'roman', 'literary'] },
@@ -22,6 +22,24 @@ export const BOOK_GENRES: GenreDef[] = [
   { label: 'Horreur', matches: ['horror', 'horreur'] },
   { label: 'Jeunesse', matches: ['young adult', 'juvenile', 'children', 'jeunesse'] },
   { label: 'Humour', matches: ['humor', 'humour', 'comedy', 'comic'] },
+]
+
+/** Genres / démographies manga (Jikan) — utilisés avec le mode livre pour le mapping des goûts. */
+export const MANGA_CATALOG_GENRES: GenreDef[] = [
+  { label: 'Shōnen', matches: ['shounen', 'shonen', 'shōnen'] },
+  { label: 'Seinen', matches: ['seinen'] },
+  { label: 'Shōjo', matches: ['shoujo', 'shojo', 'shōjo'] },
+  { label: 'Josei', matches: ['josei'] },
+  { label: 'Action', matches: ['action'] },
+  { label: 'Aventure', matches: ['adventure', 'aventure'] },
+  { label: 'Comédie', matches: ['comedy', 'comédie'] },
+  { label: 'Drame', matches: ['drama', 'drame'] },
+  { label: 'Isekai', matches: ['isekai'] },
+  { label: 'Sports', matches: ['sports', 'sport'] },
+  { label: 'Slice of Life', matches: ['slice of life'] },
+  { label: 'Surnaturel', matches: ['supernatural', 'surnaturel'] },
+  { label: 'Horreur (manga)', matches: ['horror'] },
+  { label: 'Mystère', matches: ['mystery', 'mystère', 'mystere'] },
 ]
 
 export const GAME_GENRES: GenreDef[] = [
@@ -62,7 +80,8 @@ export const MOVIE_GENRES: GenreDef[] = [
 ]
 
 export const GENRE_LISTS_BY_MODE: Record<CatalogMode, GenreDef[]> = {
-  book: BOOK_GENRES,
+  book: [...BOOK_GENRES],
+  manga: [...MANGA_CATALOG_GENRES],
   game: GAME_GENRES,
   movie: MOVIE_GENRES,
 }

@@ -274,18 +274,21 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
 
   const isBookLike = item.type === 'book' || item.type === 'manga'
 
-  const accent = item.type === 'book' ? 'amber' as const
-    : item.type === 'game' ? 'indigo' as const
-    : item.type === 'manga' ? 'pink' as const
-    : 'rose' as const
+  const accent = item.type === 'book'
+    ? ('amber' as const)
+    : item.type === 'manga'
+      ? ('violet' as const)
+      : item.type === 'game'
+        ? ('indigo' as const)
+        : ('rose' as const)
 
   const accentClass = item.type === 'book'
     ? { from: 'from-amber-400', to: 'to-amber-600', star: 'fill-amber-500 text-amber-500' }
-    : item.type === 'game'
-    ? { from: 'from-indigo-400', to: 'to-indigo-600', star: 'fill-indigo-500 text-indigo-500' }
     : item.type === 'manga'
-    ? { from: 'from-pink-400', to: 'to-pink-600', star: 'fill-pink-500 text-pink-500' }
-    : { from: 'from-rose-400', to: 'to-rose-600', star: 'fill-rose-500 text-rose-500' }
+      ? { from: 'from-violet-400', to: 'to-violet-600', star: 'fill-violet-500 text-violet-500' }
+      : item.type === 'game'
+        ? { from: 'from-indigo-400', to: 'to-indigo-600', star: 'fill-indigo-500 text-indigo-500' }
+        : { from: 'from-rose-400', to: 'to-rose-600', star: 'fill-rose-500 text-rose-500' }
 
   const duration = item.type !== 'game' && item.type !== 'manga'
     ? formatDuration(catalogMeta?.durationMinutes ?? item.duration_minutes)

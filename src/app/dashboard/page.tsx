@@ -5,13 +5,14 @@ export const dynamic = 'force-dynamic'
 import { useEffect, useState, useMemo } from 'react'
 import Link from 'next/link'
 import {
-  BookOpen, Gamepad2, Film, Star, Notebook, ArrowRight,
+  BookOpen, LibraryBig, Gamepad2, Film, Star, Notebook, ArrowRight,
   Trophy, BarChart3, CalendarDays, TrendingUp,
 } from 'lucide-react'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
 } from 'recharts'
 import { useMode } from '@/context/ModeContext'
+import type { ModeAccent } from '@/context/ModeContext'
 import { createClient } from '@/lib/supabase/client'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
@@ -21,6 +22,7 @@ import type { LibraryEntryWithItem, StatusType, ItemType } from '@/types'
 const MONTH_LABELS = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin', 'Juil', 'Aoû', 'Sep', 'Oct', 'Nov', 'Déc']
 const ACCENT_HEX: Record<string, string> = {
   amber: '#D97706',
+  violet: '#7C3AED',
   indigo: '#4F46E5',
   rose: '#E11D48',
 }
@@ -70,7 +72,7 @@ function EntryRow({
   accent,
 }: {
   entry: LibraryEntryWithItem
-  accent: 'amber' | 'indigo' | 'rose'
+  accent: ModeAccent
 }) {
   const item = entry.items
   return (
@@ -106,7 +108,7 @@ function EntryRow({
   )
 }
 
-function EmptyState({ status, accent, itemType }: { status: StatusType; accent: 'amber' | 'indigo' | 'rose'; itemType: ItemType }) {
+function EmptyState({ status, accent, itemType }: { status: StatusType; accent: ModeAccent; itemType: ItemType }) {
   const labels = MODE_STATUS_LABELS[itemType]
   return (
     <div className="flex flex-col items-center gap-2 py-12 text-center">
@@ -196,7 +198,8 @@ export default function DashboardPage() {
     return allEntries.find((e) => e.status === 'completed') ?? allEntries[0] ?? null
   }, [allEntries])
 
-  const ModeIcon = mode === 'book' ? BookOpen : mode === 'game' ? Gamepad2 : Film
+  const ModeIcon =
+    mode === 'book' ? BookOpen : mode === 'manga' ? LibraryBig : mode === 'game' ? Gamepad2 : Film
   const labels = MODE_STATUS_LABELS[mode]
 
   return (
@@ -208,7 +211,13 @@ export default function DashboardPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Mon Dashboard</h1>
           <p className="text-sm text-muted-foreground">
-            {mode === 'book' ? 'Ta bibliothèque' : mode === 'game' ? 'Ta ludothèque' : 'Ta cinémathèque'}
+            {mode === 'book'
+              ? 'Ta bibliothèque'
+              : mode === 'manga'
+                ? 'Ta mangathèque'
+                : mode === 'game'
+                  ? 'Ta ludothèque'
+                  : 'Ta cinémathèque'}
           </p>
         </div>
       </div>
@@ -314,7 +323,14 @@ export default function DashboardPage() {
           <h2 className="text-base font-semibold text-muted-foreground">Ma collection</h2>
           <div role="group" className="flex items-center gap-1 rounded-full bg-muted p-1">
             {(['backlog', 'completed'] as StatusType[]).map((s) => {
-              const accentActive = accent === 'amber' ? 'bg-amber-600' : accent === 'indigo' ? 'bg-indigo-600' : 'bg-rose-600'
+              const accentActive =
+                accent === 'amber'
+                  ? 'bg-amber-600'
+                  : accent === 'violet'
+                    ? 'bg-violet-600'
+                    : accent === 'indigo'
+                      ? 'bg-indigo-600'
+                      : 'bg-rose-600'
               return (
                 <button
                   key={s}

@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server'
 import { getTrendingManga, searchManga } from '@/lib/catalog/jikan'
+import { catalogDebug, isCatalogDebug } from '@/lib/catalog/debugLog'
 
 export const dynamic = 'force-dynamic'
 
@@ -11,8 +12,22 @@ export async function GET(req: NextRequest) {
     const result = q
       ? await searchManga(q, 24, page, genre ?? undefined)
       : await getTrendingManga(24, page, genre ?? undefined)
+
+    if (isCatalogDebug()) {
+      catalogDebug('api/catalog/manga', {
+        q: q ?? null,
+        genre: genre ?? null,
+        page,
+        itemCount: result.items.length,
+        hasMore: result.hasMore,
+      })
+    }
+
     return NextResponse.json(result)
-  } catch {
+  } catch (err) {
+    catalogDebug('api/catalog/manga ERROR', {
+      message: err instanceof Error ? err.message : String(err),
+    })
     return NextResponse.json({ items: [], hasMore: false })
   }
 }

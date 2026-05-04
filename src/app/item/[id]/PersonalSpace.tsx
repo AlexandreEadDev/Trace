@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { Lock, BookCheck, BookMarked, Trash2 } from 'lucide-react'
 import { useMode } from '@/context/ModeContext'
+import type { ModeAccent } from '@/context/ModeContext'
 import { createClient } from '@/lib/supabase/client'
 import { ReviewForm } from '@/components/ReviewForm'
 import { Separator } from '@/components/ui/separator'
@@ -28,7 +29,7 @@ function QuickAddButton({
 }: {
   entry: LibraryEntryType | null
   itemType: ItemType
-  accent: 'amber' | 'indigo' | 'rose'
+  accent: ModeAccent
   onAdd: () => void
   onComplete: () => void
   onRemove: () => void

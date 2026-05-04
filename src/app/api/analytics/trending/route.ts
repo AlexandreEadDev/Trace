@@ -4,7 +4,8 @@ import { createClient } from '@/lib/supabase/server'
 export const dynamic = 'force-dynamic'
 
 const TYPE_PREFIXES: Record<string, string[]> = {
-  book: ['googlebooks__', 'openlibrary__'],
+  book: ['googlebooks__'],
+  manga: ['jikan__'],
   game: ['rawg__', 'freetogame__'],
   movie: ['tmdb__'],
 }
@@ -28,28 +29,34 @@ export async function GET(req: NextRequest) {
 
     // Pull recent clicks (last 90 days) ordered by recency. Up to 5000 rows.
     const since = new Date(Date.now() - 90 * DAY_MS).toISOString()
-    let query = supabase
+    const { data, error } = await supabase
       .from('item_clicks')
       .select('item_id, created_at')
       .gte('created_at', since)
       .order('created_at', { ascending: false })
       .limit(5000)
 
-    // Push type filter to SQL when possible (avoids loading rows for other types)
-    if (type && TYPE_PREFIXES[type]) {
-      const prefixes = TYPE_PREFIXES[type]
-      const orFilter = prefixes.map((p) => `item_id.like.${p}%`).join(',')
-      query = query.or(orFilter)
+    if (error) {
+      console.error('[api/analytics/trending] supabase:', error.message, error)
+      return NextResponse.json([])
     }
+    if (!data) return NextResponse.json([])
 
-    const { data, error } = await query
-    if (error || !data) return NextResponse.json([])
+    // Filtrer par préfixe d’id en JS : `.or('item_id.like....%')` casse souvent PostgREST
+    // (underscores LIKE, encodage `%`) et peut provoquer des 500 côté API.
+    const prefixes = type && TYPE_PREFIXES[type] ? TYPE_PREFIXES[type] : null
+    const rows = prefixes
+      ? data.filter((row) => {
+          const id = row.item_id
+          return typeof id === 'string' && prefixes.some((p) => id.startsWith(p))
+        })
+      : data
 
     const now = Date.now()
     const weighted = new Map<string, number>()
     const rawCounts = new Map<string, number>()
 
-    for (const row of data) {
+    for (const row of rows) {
       const id: string = row.item_id
       if (!id) continue
       const clickedAt = row.created_at ? new Date(row.created_at).getTime() : now

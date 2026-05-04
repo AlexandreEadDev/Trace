@@ -1,20 +1,25 @@
 export const dynamic = 'force-dynamic'
 
 import { notFound } from 'next/navigation'
-import { Star, Calendar, Tag, ArrowLeft, User, Clock, Gamepad2, Gauge, ExternalLink } from 'lucide-react'
-import Link from 'next/link'
+import { Star, Calendar, Tag, User, Clock, Gamepad2, Gauge, ExternalLink } from 'lucide-react'
 import { createClient } from '@/lib/supabase/server'
 import { PersonalSpace } from './PersonalSpace'
+import { BackButton } from './BackButton'
 import { Separator } from '@/components/ui/separator'
 import { Badge } from '@/components/ui/badge'
-import { decodeCatalogId, catalogItemToSupabaseRow } from '@/lib/catalog/types'
+import { decodeCatalogId, catalogItemToSupabaseRow, type CatalogSource } from '@/lib/catalog/types'
 import { getBookByExternalId as getOlBook } from '@/lib/catalog/openlibrary'
-import { getBookByExternalId as getGbBook } from '@/lib/catalog/googlebooks'
+import { getBookByExternalId as getGbBook, getBookSeries, getSimilarBooks, findBookByTitleAuthor } from '@/lib/catalog/googlebooks'
 import { getGameByExternalId as getFtgGame } from '@/lib/catalog/freetogame'
-import { getGameByExternalId as getRawgGame } from '@/lib/catalog/rawg'
-import { getMovieByExternalId } from '@/lib/catalog/tmdb'
+import { getGameByExternalId as getRawgGame, getGameSeries, getSuggestedGames } from '@/lib/catalog/rawg'
+import { getMovieByExternalId, getMovieCollection, getSimilarMovies } from '@/lib/catalog/tmdb'
+import { getMangaByExternalId, getMangaRelations, getMangaRecommendations } from '@/lib/catalog/jikan'
+import { ExpandableText } from './ExpandableText'
+import { TrailerEmbed } from './TrailerEmbed'
+import { GameMedia } from './GameMedia'
+import { RelatedItems } from './RelatedItems'
+import { MangaVolumeList } from './MangaVolumeList'
 import { getHltbData } from '@/lib/catalog/hltb'
-import type { HltbData } from '@/lib/catalog/hltb'
 import { cn } from '@/lib/utils'
 import type { Item, Review } from '@/types'
 import type { CatalogItem } from '@/lib/catalog/types'
@@ -109,10 +114,12 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
   let item: Item | null = null
   let supabaseItemId: string | null = null
   let catalogMeta: CatalogItem | null = null
+  let effectiveExternal: { source: CatalogSource; id: string } | null = null
 
   const external = decodeCatalogId(rawId)
 
   if (external) {
+    effectiveExternal = external
     const { data: existing } = await supabase
       .from('items')
       .select('*')
@@ -128,6 +135,7 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
       else if (external.source === 'tmdb') catalogMeta = await getMovieByExternalId(external.id)
       else if (external.source === 'openlibrary') catalogMeta = await getOlBook(external.id)
       else if (external.source === 'googlebooks') catalogMeta = await getGbBook(external.id)
+      else if (external.source === 'jikan') catalogMeta = await getMangaByExternalId(external.id)
     } else {
       let fetched: CatalogItem | null = null
       if (external.source === 'openlibrary') fetched = await getOlBook(external.id)
@@ -135,6 +143,7 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
       else if (external.source === 'rawg') fetched = await getRawgGame(external.id)
       else if (external.source === 'freetogame') fetched = await getFtgGame(external.id)
       else if (external.source === 'tmdb') fetched = await getMovieByExternalId(external.id)
+      else if (external.source === 'jikan') fetched = await getMangaByExternalId(external.id)
 
       if (!fetched) notFound()
       catalogMeta = fetched
@@ -168,6 +177,24 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
     if (!data) notFound()
     item = data as Item
     supabaseItemId = rawId
+
+    // Hydration: when arriving from a Supabase UUID (e.g. Dashboard link), reconstruct
+    // the external descriptor so the page can fetch trailer/screenshots/synopsis/related.
+    if (item.external_source && item.external_id) {
+      const validSources: CatalogSource[] = ['openlibrary', 'googlebooks', 'freetogame', 'rawg', 'tmdb', 'jikan']
+      if (validSources.includes(item.external_source as CatalogSource)) {
+        effectiveExternal = {
+          source: item.external_source as CatalogSource,
+          id: item.external_id,
+        }
+        const ext = effectiveExternal
+        if (ext.source === 'rawg') catalogMeta = await getRawgGame(ext.id)
+        else if (ext.source === 'tmdb') catalogMeta = await getMovieByExternalId(ext.id)
+        else if (ext.source === 'openlibrary') catalogMeta = await getOlBook(ext.id)
+        else if (ext.source === 'googlebooks') catalogMeta = await getGbBook(ext.id)
+        else if (ext.source === 'jikan') catalogMeta = await getMangaByExternalId(ext.id)
+      }
+    }
   }
 
   const reviews: Review[] = []
@@ -191,19 +218,76 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
     ? reviews.reduce((s, r) => s + r.rating, 0) / reviews.length
     : null
 
-  // Fetch HLTB data in parallel with rendering — only for games
-  let hltb: HltbData | null = null
-  if (item.type === 'game') {
-    hltb = await getHltbData(item.title)
+  const eff = effectiveExternal
+
+  // Hybrid book resolution: when the item came from OpenLibrary, OL's detail endpoint
+  // doesn't expose enough signal to power "Voir aussi" / "Même série". Resolve to the
+  // matching Google Books volume so we get authors, description, categories and seriesInfo.
+  // We keep the OL externalSource/externalId for persistence; only the metadata is merged.
+  if (eff?.source === 'openlibrary' && catalogMeta) {
+    const gbMatch = await findBookByTitleAuthor(
+      catalogMeta.title,
+      catalogMeta.authors,
+      catalogMeta.releaseYear,
+    )
+    if (gbMatch) {
+      const enriched = await getGbBook(gbMatch.externalId)
+      const richSource = enriched ?? gbMatch
+      catalogMeta = {
+        ...catalogMeta,
+        description: catalogMeta.description ?? richSource.description ?? null,
+        authors: catalogMeta.authors ?? richSource.authors,
+        genre: catalogMeta.genre ?? richSource.genre ?? null,
+        genres: catalogMeta.genres ?? richSource.genres,
+        seriesId: richSource.seriesId ?? null,
+        seriesTitle: richSource.seriesTitle ?? null,
+      }
+    }
   }
+
+  // Fetch HLTB, related/series, and "voir aussi" data in parallel
+  const [hltb, relatedItems, seeAlsoItems] = await Promise.all([
+    item.type === 'game' ? getHltbData(item.title) : Promise.resolve(null),
+    eff
+      ? eff.source === 'rawg'
+        ? getGameSeries(eff.id)
+        : eff.source === 'tmdb' && catalogMeta?.collectionId
+        ? getMovieCollection(catalogMeta.collectionId)
+        : eff.source === 'jikan'
+        ? getMangaRelations(eff.id)
+        : eff.source === 'googlebooks' || eff.source === 'openlibrary'
+        ? getBookSeries(catalogMeta?.seriesId ?? null, item.title, catalogMeta?.authors, catalogMeta?.seriesTitle ?? null)
+        : Promise.resolve([])
+      : Promise.resolve([]),
+    eff
+      ? eff.source === 'rawg'
+        ? getSuggestedGames(eff.id)
+        : eff.source === 'tmdb'
+        ? getSimilarMovies(eff.id)
+        : eff.source === 'jikan'
+        ? getMangaRecommendations(eff.id)
+        : eff.source === 'googlebooks' || eff.source === 'openlibrary'
+        ? getSimilarBooks(catalogMeta?.authors, catalogMeta?.genre)
+        : Promise.resolve([])
+      : Promise.resolve([]),
+  ])
+
+  const isBookLike = item.type === 'book' || item.type === 'manga'
+
+  const accent = item.type === 'book' ? 'amber' as const
+    : item.type === 'game' ? 'indigo' as const
+    : item.type === 'manga' ? 'pink' as const
+    : 'rose' as const
 
   const accentClass = item.type === 'book'
     ? { from: 'from-amber-400', to: 'to-amber-600', star: 'fill-amber-500 text-amber-500' }
     : item.type === 'game'
     ? { from: 'from-indigo-400', to: 'to-indigo-600', star: 'fill-indigo-500 text-indigo-500' }
+    : item.type === 'manga'
+    ? { from: 'from-pink-400', to: 'to-pink-600', star: 'fill-pink-500 text-pink-500' }
     : { from: 'from-rose-400', to: 'to-rose-600', star: 'fill-rose-500 text-rose-500' }
 
-  const duration = item.type !== 'game'
+  const duration = item.type !== 'game' && item.type !== 'manga'
     ? formatDuration(catalogMeta?.durationMinutes ?? item.duration_minutes)
     : null
   const metacritic = catalogMeta?.metacritic ?? null
@@ -211,17 +295,11 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
   const tmdbVoteCount = catalogMeta?.tmdbVoteCount ?? null
   const hasHltb = hltb && (hltb.mainStory || hltb.mainExtra || hltb.completionist)
 
-  const typeLabel = item.type === 'book' ? 'Livre' : item.type === 'game' ? 'Jeu vidéo' : 'Film'
+  const typeLabel = item.type === 'book' ? 'Livre' : item.type === 'game' ? 'Jeu vidéo' : item.type === 'manga' ? 'Manga' : 'Film'
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-10 sm:px-6 lg:px-8 space-y-10">
-      <Link
-        href="/catalog"
-        className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
-      >
-        <ArrowLeft className="h-4 w-4" />
-        Retour au catalogue
-      </Link>
+      <BackButton fallbackHref="/catalog" />
 
       {/* Hero */}
       <section className="flex flex-col gap-8 sm:flex-row">
@@ -264,6 +342,40 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
             )}
           </div>
 
+          {/* Manga metadata */}
+          {item.type === 'manga' && catalogMeta && (
+            <div className="flex flex-wrap items-center gap-2">
+              {catalogMeta.mangaStatus && (
+                <span className={cn(
+                  'inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold',
+                  catalogMeta.mangaStatus === 'ongoing'
+                    ? 'bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-300'
+                    : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+                )}>
+                  {catalogMeta.mangaStatus === 'ongoing' ? 'En cours' : 'Terminée'}
+                </span>
+              )}
+              {catalogMeta.volumes != null && (
+                <span className="text-xs text-muted-foreground">
+                  {catalogMeta.volumes} tome{catalogMeta.volumes > 1 ? 's' : ''}
+                </span>
+              )}
+              {catalogMeta.chapters != null && (
+                <span className="text-xs text-muted-foreground">
+                  {catalogMeta.chapters} chapitre{catalogMeta.chapters > 1 ? 's' : ''}
+                </span>
+              )}
+              {catalogMeta.publishedFrom && (
+                <span className="text-xs text-muted-foreground">
+                  {new Date(catalogMeta.publishedFrom).toLocaleDateString('fr-FR', { year: 'numeric', month: 'short' })}
+                  {catalogMeta.publishedTo && catalogMeta.mangaStatus === 'finished'
+                    ? ` → ${new Date(catalogMeta.publishedTo).toLocaleDateString('fr-FR', { year: 'numeric', month: 'short' })}`
+                    : catalogMeta.mangaStatus === 'ongoing' ? ' → …' : ''}
+                </span>
+              )}
+            </div>
+          )}
+
           {/* HLTB breakdown for games */}
           {item.type === 'game' && (
             <div className="flex flex-wrap items-center gap-3">
@@ -298,14 +410,26 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
                   </a>
                 </>
               ) : (
-                <a
-                  href={`https://howlongtobeat.com/?q=${encodeURIComponent(item.title)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs text-indigo-500 hover:text-indigo-400 transition-colors flex items-center gap-1"
-                >
-                  Voir les temps <ExternalLink className="h-3 w-3" />
-                </a>
+                <>
+                  {['Histoire', 'Histoire + Extras', '100%'].map((label) => (
+                    <span
+                      key={label}
+                      title="Données non disponibles sur HowLongToBeat"
+                      className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground opacity-50"
+                    >
+                      {label}&nbsp;<strong>—</strong>
+                    </span>
+                  ))}
+                  <a
+                    href={`https://howlongtobeat.com/?q=${encodeURIComponent(item.title)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                    title="Rechercher sur HowLongToBeat"
+                  >
+                    <ExternalLink className="h-3 w-3 inline" />
+                  </a>
+                </>
               )}
             </div>
           )}
@@ -344,6 +468,87 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
           )}
         </div>
       </section>
+
+      {/* Synopsis — books and manga */}
+      {isBookLike && catalogMeta?.description && (
+        <>
+          <Separator />
+          <section className="space-y-2">
+            <h2 className="text-base font-semibold">Synopsis</h2>
+            <ExpandableText text={catalogMeta.description} />
+          </section>
+        </>
+      )}
+
+      {/* Manga volume list */}
+      {item.type === 'manga' && supabaseItemId && eff?.source === 'jikan' && (
+        <>
+          <Separator />
+          <MangaVolumeList
+            mangaItemId={supabaseItemId}
+            mangaExternalId={eff.id}
+            totalVolumes={catalogMeta?.volumes}
+            totalChapters={catalogMeta?.chapters}
+          />
+        </>
+      )}
+
+      {/* Movie trailer */}
+      {item.type === 'movie' && catalogMeta?.trailerKey && (
+        <>
+          <Separator />
+          <TrailerEmbed trailerKey={catalogMeta.trailerKey} title={item.title} />
+        </>
+      )}
+
+      {/* Game trailer — rendered separately above the screenshot gallery, mirroring movies */}
+      {item.type === 'game' && catalogMeta?.trailerKey && (
+        <>
+          <Separator />
+          <TrailerEmbed trailerKey={catalogMeta.trailerKey} title={item.title} />
+        </>
+      )}
+
+      {/* Game media (screenshots + optional gameplay clip) */}
+      {item.type === 'game' && (catalogMeta?.screenshots?.length || catalogMeta?.clipUrl) && (
+        <>
+          <Separator />
+          <GameMedia
+            screenshots={catalogMeta.screenshots ?? []}
+            clipUrl={catalogMeta.clipUrl}
+            title={item.title}
+          />
+        </>
+      )}
+
+      {/* Related / series */}
+      {relatedItems.length > 0 && (
+        <>
+          <Separator />
+          <RelatedItems
+            items={relatedItems}
+            accent={accent}
+            title={
+              item.type === 'game' ? 'Dans la même série'
+              : item.type === 'movie' && catalogMeta?.collectionName ? catalogMeta.collectionName
+              : item.type === 'manga' ? 'Mangas liés'
+              : 'Dans la même série'
+            }
+          />
+        </>
+      )}
+
+      {/* Voir aussi */}
+      {seeAlsoItems.length > 0 && (
+        <>
+          <Separator />
+          <RelatedItems
+            items={seeAlsoItems}
+            accent={accent}
+            title="Voir aussi"
+          />
+        </>
+      )}
 
       <Separator />
 

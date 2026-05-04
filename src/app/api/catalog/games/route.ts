@@ -6,10 +6,13 @@ export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
   const q = req.nextUrl.searchParams.get('q')
+  const genre = req.nextUrl.searchParams.get('genre')
   const page = Math.max(1, Number(req.nextUrl.searchParams.get('page') ?? '1'))
   try {
     if (hasRawgKey()) {
-      const result = q ? await rawgSearch(q, 24, page) : await getTrendingGames(24, page)
+      const result = q
+        ? await rawgSearch(q, 24, page, genre ?? undefined)
+        : await getTrendingGames(24, page, genre ?? undefined)
       return NextResponse.json(result)
     }
     // Fallback: FreeToGame (no API key needed, no pagination)

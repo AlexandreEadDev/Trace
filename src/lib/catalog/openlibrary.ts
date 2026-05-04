@@ -1,9 +1,10 @@
+import { unstable_cache } from 'next/cache'
 import type { CatalogItem } from './types'
 
 const OL = 'https://openlibrary.org'
 const COVERS = 'https://covers.openlibrary.org/b/id'
 
-async function fetchSafe(url: string, ms = 10000): Promise<Response> {
+async function fetchSafe(url: string, ms = 5000): Promise<Response> {
   const controller = new AbortController()
   const id = setTimeout(() => controller.abort(), ms)
   try {
@@ -64,14 +65,14 @@ export interface PagedResult {
 /**
  * Trending books from Open Library's real-time trending endpoint.
  * Sorted by weekly page views — these are genuinely popular books.
+ * Cached for 15 minutes so subsequent requests are instant.
  */
-export async function getTrendingBooks(limit = 24, page = 1): Promise<PagedResult> {
+async function fetchTrendingBooks(limit: number, page: number): Promise<PagedResult> {
   const fetchLimit = Math.min(limit + 12, 48)
-
   try {
     const res = await fetchSafe(
       `${OL}/trending/weekly.json?limit=${fetchLimit}&page=${page}`,
-      8000
+      3500
     )
     if (!res.ok) return { items: [], hasMore: false }
     const data = await res.json()
@@ -82,11 +83,32 @@ export async function getTrendingBooks(limit = 24, page = 1): Promise<PagedResul
       .filter((it): it is CatalogItem => it !== null)
       .slice(0, limit)
 
-    // OL trending has no total_numFound, estimate from fetched count
     const hasMore = works.length >= fetchLimit
     return { items, hasMore }
   } catch {
     return { items: [], hasMore: false }
+  }
+}
+
+const getCachedTrendingBooks = unstable_cache(
+  fetchTrendingBooks,
+  ['ol-trending-books'],
+  { revalidate: 900 } // 15 minutes
+)
+
+export async function getTrendingBooks(limit = 24, page = 1): Promise<PagedResult> {
+  return getCachedTrendingBooks(limit, page)
+}
+
+async function fetchAuthorName(authorKey: string): Promise<string | null> {
+  try {
+    const cleanKey = authorKey.startsWith('/') ? authorKey : `/${authorKey}`
+    const res = await fetchSafe(`${OL}${cleanKey}.json`, 4000)
+    if (!res.ok) return null
+    const data = await res.json()
+    return typeof data?.name === 'string' ? data.name : null
+  } catch {
+    return null
   }
 }
 
@@ -107,13 +129,33 @@ export async function getBookByExternalId(externalId: string): Promise<CatalogIt
       if (match) releaseYear = Number.parseInt(match[0], 10)
     }
 
-    const rawSubjects: unknown[] = work.subjects ?? []
-    const genre =
-      typeof rawSubjects[0] === 'string'
-        ? rawSubjects[0]
-        : typeof (rawSubjects[0] as { value?: string })?.value === 'string'
-        ? (rawSubjects[0] as { value: string }).value
+    const rawSubjects: unknown[] = Array.isArray(work.subjects) ? work.subjects : []
+    const subjects: string[] = rawSubjects
+      .map((s) => (typeof s === 'string' ? s : typeof (s as { value?: string })?.value === 'string' ? (s as { value: string }).value : null))
+      .filter((s): s is string => typeof s === 'string')
+    const genre = subjects[0] ?? null
+
+    let description: string | null = null
+    if (work.description) {
+      description = typeof work.description === 'string'
+        ? work.description
+        : typeof work.description?.value === 'string'
+        ? work.description.value
         : null
+    }
+
+    // Fetch up to 3 author names in parallel (work.authors is an array of { author: { key } })
+    let authors: string[] | undefined
+    if (Array.isArray(work.authors) && work.authors.length > 0) {
+      const authorKeys: string[] = work.authors
+        .slice(0, 3)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .map((a: any) => a?.author?.key)
+        .filter((k: unknown): k is string => typeof k === 'string')
+      const names = await Promise.all(authorKeys.map(fetchAuthorName))
+      const filtered = names.filter((n): n is string => typeof n === 'string' && n.length > 0)
+      if (filtered.length > 0) authors = filtered
+    }
 
     return {
       externalSource: 'openlibrary',
@@ -121,8 +163,11 @@ export async function getBookByExternalId(externalId: string): Promise<CatalogIt
       title: String(work.title),
       type: 'book',
       genre,
+      genres: subjects.length > 0 ? subjects : undefined,
       coverUrl: coverUrl(coverId),
       releaseYear,
+      authors,
+      description,
     }
   } catch {
     return null

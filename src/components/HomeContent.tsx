@@ -2,13 +2,15 @@
 
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { BookOpen, Gamepad2, Film, Star, ArrowRight, Search, Trophy, TrendingUp } from 'lucide-react'
+import { BookOpen, Gamepad2, Film, Star, ArrowRight, Search, Trophy, TrendingUp, Sparkles } from 'lucide-react'
 import { useMode } from '@/context/ModeContext'
+import type { NavMode } from '@/context/ModeContext'
 import { createClient } from '@/lib/supabase/client'
 import { cn } from '@/lib/utils'
 import { encodeCatalogId } from '@/lib/catalog/types'
 import type { CatalogItem } from '@/lib/catalog/types'
-import type { ItemType, ItemWithReviews } from '@/types'
+import type { ItemWithReviews } from '@/types'
+import { mapGenreToLabel } from '@/lib/catalog/genres'
 
 // ─── Config per mode ─────────────────────────────────────────────────────────
 
@@ -61,7 +63,7 @@ const MODE_CONFIG = {
     ctaBg: 'bg-rose-50 border-rose-100',
     apiEndpoint: '/api/catalog/movies',
   },
-} satisfies Record<ItemType, object>
+} satisfies Record<NavMode, object>
 
 // ─── Bayesian scoring ────────────────────────────────────────────────────────
 
@@ -97,12 +99,10 @@ function computeBest(items: ItemWithReviews[], limit = 12): ItemWithReviews[] {
 function CatalogCard({
   item,
   accent,
-  trendingCount = 0,
   onTrack,
 }: {
   item: CatalogItem
   accent: 'amber' | 'indigo' | 'rose'
-  trendingCount?: number
   onTrack?: (id: string) => void
 }) {
   const href = `/item/${encodeCatalogId(item.externalSource, item.externalId)}`
@@ -117,12 +117,6 @@ function CatalogCard({
     >
       <div className="overflow-hidden rounded-xl border bg-card shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-md">
         <div className="relative aspect-[2/3] w-full overflow-hidden bg-muted">
-          {trendingCount >= 3 && (
-            <div className="absolute top-2 right-2 z-10 flex items-center gap-0.5 rounded-full bg-orange-500/90 px-1.5 py-0.5 text-[10px] font-bold text-white shadow backdrop-blur-sm">
-              <TrendingUp className="h-2.5 w-2.5" />
-              {trendingCount}
-            </div>
-          )}
           {item.coverUrl && !imgError ? (
             <>
               {!imgLoaded && <div className="absolute inset-0 animate-pulse bg-muted" />}
@@ -267,6 +261,9 @@ export function HomeContent() {
   const [loadingTrending, setLoadingTrending] = useState(true)
   const [loadingBest, setLoadingBest] = useState(true)
   const [transitioning, setTransitioning] = useState(false)
+  const [recommendations, setRecommendations] = useState<CatalogItem[]>([])
+  const [topGenreLabels, setTopGenreLabels] = useState<string[]>([])
+  const [loadingRecs, setLoadingRecs] = useState(false)
 
   useEffect(() => {
     if (prevMode.current === mode) return
@@ -339,6 +336,116 @@ export function HomeContent() {
       }, () => { if (!cancelled) setLoadingBest(false) })
     return () => { cancelled = true }
   }, [mode])
+
+  // ── Personalised recommendations ("Pourrait vous plaire") ─────────────────
+  // Aggregates the user's reviews and library entries for the current mode,
+  // computes a weighted profile of preferred genres, then fetches catalog items
+  // from those genres. Excludes items already in the user's library.
+  useEffect(() => {
+    let cancelled = false
+    setRecommendations([])
+    setTopGenreLabels([])
+    setLoadingRecs(true)
+
+    const run = async () => {
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) { setLoadingRecs(false); return }
+
+      const [{ data: libRows }, { data: reviewRows }] = await Promise.all([
+        supabase
+          .from('user_libraries')
+          .select('status, items(id, type, genre, external_source, external_id)')
+          .eq('user_id', user.id),
+        supabase
+          .from('reviews')
+          .select('rating, items(id, type, genre, external_source, external_id)')
+          .eq('user_id', user.id),
+      ])
+
+      type LibRow = { status: string; items: { id: string; type: string; genre: string | null; external_source: string | null; external_id: string | null } | null }
+      type RevRow = { rating: number; items: { id: string; type: string; genre: string | null; external_source: string | null; external_id: string | null } | null }
+      const libs = (libRows ?? []) as unknown as LibRow[]
+      const revs = (reviewRows ?? []) as unknown as RevRow[]
+
+      // Collect external ids of items already in library, to exclude them later
+      const ownedExternal = new Set<string>()
+      const genreScore = new Map<string, number>()
+
+      for (const row of libs) {
+        const it = row.items
+        if (!it || it.type !== mode) continue
+        if (it.external_source && it.external_id) {
+          ownedExternal.add(`${it.external_source}__${it.external_id}`)
+        }
+        if (it.genre) {
+          const w = row.status === 'completed' ? 1 : 0.3
+          genreScore.set(it.genre, (genreScore.get(it.genre) ?? 0) + w)
+        }
+      }
+
+      for (const row of revs) {
+        const it = row.items
+        if (!it || it.type !== mode) continue
+        if (it.external_source && it.external_id) {
+          ownedExternal.add(`${it.external_source}__${it.external_id}`)
+        }
+        if (it.genre) {
+          // Centred at 3 → range [-2, +2]
+          genreScore.set(it.genre, (genreScore.get(it.genre) ?? 0) + (row.rating - 3))
+        }
+      }
+
+      if (genreScore.size === 0) { if (!cancelled) setLoadingRecs(false); return }
+
+      // Map raw genre strings to canonical catalog labels and aggregate
+      const labelScore = new Map<string, number>()
+      for (const [raw, s] of genreScore.entries()) {
+        if (s <= 0) continue
+        const label = mapGenreToLabel(raw, mode)
+        if (!label) continue
+        labelScore.set(label, (labelScore.get(label) ?? 0) + s)
+      }
+
+      const topLabels = [...labelScore.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([l]) => l)
+
+      if (topLabels.length === 0) { if (!cancelled) setLoadingRecs(false); return }
+      if (!cancelled) setTopGenreLabels(topLabels)
+
+      // Fetch catalog items for each top genre in parallel
+      const fetches = topLabels.map((label) =>
+        fetch(`${cfg.apiEndpoint}?genre=${encodeURIComponent(label)}&page=1`)
+          .then((r) => r.json())
+          .catch(() => null)
+      )
+      const responses = await Promise.all(fetches)
+      if (cancelled) return
+
+      const merged: CatalogItem[] = []
+      const seen = new Set<string>()
+      for (const r of responses) {
+        const items: CatalogItem[] = Array.isArray(r) ? r : (r?.items ?? [])
+        for (const it of items) {
+          const key = `${it.externalSource}__${it.externalId}`
+          if (seen.has(key) || ownedExternal.has(key)) continue
+          seen.add(key)
+          merged.push(it)
+        }
+      }
+
+      merged.sort((a, b) => (b.popularityScore ?? 0) - (a.popularityScore ?? 0))
+      if (!cancelled) {
+        setRecommendations(merged.slice(0, 12))
+        setLoadingRecs(false)
+      }
+    }
+
+    run().catch(() => { if (!cancelled) setLoadingRecs(false) })
+    return () => { cancelled = true }
+  }, [mode, cfg.apiEndpoint])
 
   const bestItems = computeBest(rawItems)
 
@@ -414,7 +521,6 @@ export function HomeContent() {
                     key={`${item.externalSource}-${item.externalId}`}
                     item={item}
                     accent={accent}
-                    trendingCount={trendingCounts.get(encodeCatalogId(item.externalSource, item.externalId)) ?? 0}
                     onTrack={trackClick}
                   />
                 ))
@@ -457,6 +563,37 @@ export function HomeContent() {
             </p>
           )}
         </section>
+
+        {/* Pourrait vous plaire — personalised genre-based recommendations */}
+        {(loadingRecs || recommendations.length > 0) && (
+          <section>
+            <div className="flex items-center gap-2 mb-4 flex-wrap">
+              <Sparkles className={cn('h-5 w-5', `text-${accent}-600`)} />
+              <h2 className="text-lg font-bold tracking-tight">Pourrait vous plaire</h2>
+              {topGenreLabels.length > 0 && (
+                <span className="text-xs text-muted-foreground">
+                  basé sur tes goûts en {topGenreLabels.join(', ')}
+                </span>
+              )}
+            </div>
+            {loadingRecs ? (
+              <ScrollRow>
+                {Array.from({ length: 6 }).map((_, i) => <CardSkeleton key={i} />)}
+              </ScrollRow>
+            ) : (
+              <ScrollRow>
+                {recommendations.map((item) => (
+                  <CatalogCard
+                    key={`rec-${item.externalSource}-${item.externalId}`}
+                    item={item}
+                    accent={accent}
+                    onTrack={trackClick}
+                  />
+                ))}
+              </ScrollRow>
+            )}
+          </section>
+        )}
 
         {/* CTA */}
         <section className={cn('rounded-2xl p-8 text-center border transition-colors duration-500', cfg.ctaBg)}>

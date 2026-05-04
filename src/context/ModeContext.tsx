@@ -3,40 +3,42 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 import type { ItemType } from '@/types'
 
-type Mode = ItemType
+// Manga is an ItemType (for DB storage) but not a navigation mode — it is
+// merged with the 'book' mode across the app.
+export type NavMode = 'book' | 'game' | 'movie'
 type Accent = 'amber' | 'indigo' | 'rose'
 
 interface ModeContextValue {
-  mode: Mode
-  setMode: (mode: Mode) => void
+  mode: NavMode
+  setMode: (mode: NavMode) => void
   accent: Accent
   accentHex: string
 }
 
 const ModeContext = createContext<ModeContextValue | null>(null)
 
-const ACCENT_MAP: Record<Mode, Accent> = {
+const ACCENT_MAP: Record<NavMode, Accent> = {
   book: 'amber',
   game: 'indigo',
   movie: 'rose',
 }
-const HEX_MAP: Record<Mode, string> = {
+const HEX_MAP: Record<NavMode, string> = {
   book: '#D97706',
   game: '#4F46E5',
   movie: '#E11D48',
 }
 
 export function ModeProvider({ children }: { children: React.ReactNode }) {
-  const [mode, setModeState] = useState<Mode>('book')
+  const [mode, setModeState] = useState<NavMode>('book')
 
   useEffect(() => {
-    const saved = localStorage.getItem('trace-mode') as Mode | null
+    const saved = localStorage.getItem('trace-mode') as NavMode | null
     if (saved === 'book' || saved === 'game' || saved === 'movie') {
       setModeState(saved)
     }
   }, [])
 
-  const setMode = (m: Mode) => {
+  const setMode = (m: NavMode) => {
     setModeState(m)
     localStorage.setItem('trace-mode', m)
   }

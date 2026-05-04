@@ -2,11 +2,11 @@
 
 import { BookOpen, Gamepad2, Film } from 'lucide-react'
 import { useMode } from '@/context/ModeContext'
+import type { NavMode } from '@/context/ModeContext'
 import { cn } from '@/lib/utils'
-import type { ItemType } from '@/types'
 
 const MODES: {
-  value: ItemType
+  value: NavMode
   label: string
   Icon: React.ComponentType<{ className?: string }>
   activeClass: string

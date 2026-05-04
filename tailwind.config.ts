@@ -8,12 +8,12 @@ const config: Config = {
     "./src/app/**/*.{js,ts,jsx,tsx,mdx}",
   ],
   safelist: [
-    { pattern: /bg-(amber|indigo|rose)-(50|100|200|500|600|700)/ },
-    { pattern: /text-(amber|indigo|rose)-(400|500|600|700)/ },
-    { pattern: /border-(amber|indigo|rose)-(100|200|300|500)/ },
-    { pattern: /ring-(amber|indigo|rose)-(400|500)/ },
-    { pattern: /from-(amber|indigo|rose)-(400|500)/ },
-    { pattern: /to-(amber|indigo|rose)-(600|700)/ },
+    { pattern: /bg-(amber|indigo|rose|pink)-(50|100|200|500|600|700)/ },
+    { pattern: /text-(amber|indigo|rose|pink)-(400|500|600|700)/ },
+    { pattern: /border-(amber|indigo|rose|pink)-(100|200|300|500)/ },
+    { pattern: /ring-(amber|indigo|rose|pink)-(400|500)/ },
+    { pattern: /from-(amber|indigo|rose|pink)-(400|500)/ },
+    { pattern: /to-(amber|indigo|rose|pink)-(600|700)/ },
   ],
   theme: {
     extend: {

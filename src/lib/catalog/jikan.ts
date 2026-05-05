@@ -215,7 +215,7 @@ export async function searchManga(query: string, limit = 24, page = 1, genre?: s
 export async function getMangaByExternalId(externalId: string): Promise<CatalogItem | null> {
   try {
     // Prefer /full for richer metadata. Fallback to base endpoint if unavailable/rate-limited.
-    let m: any = null
+    let m: Record<string, unknown> | null = null
     const fullRes = await fetchSafe(`${BASE}/manga/${externalId}/full`)
     if (fullRes.ok) {
       const fullData = await fullRes.json()
@@ -230,7 +230,7 @@ export async function getMangaByExternalId(externalId: string): Promise<CatalogI
     const base = mangaToItem(m)
     if (!base) return null
 
-    const statusRaw: string = m.status ?? ''
+    const statusRaw = typeof m.status === 'string' ? m.status : ''
     const mangaStatus: 'ongoing' | 'finished' | null =
       statusRaw.toLowerCase().includes('publish') ? 'ongoing'
       : statusRaw.toLowerCase().includes('finish') || statusRaw.toLowerCase().includes('complet') ? 'finished'
@@ -238,8 +238,12 @@ export async function getMangaByExternalId(externalId: string): Promise<CatalogI
 
     const volumes: number | null = toFinitePositiveInt(m.volumes)
     const chapters: number | null = toFinitePositiveInt(m.chapters)
-    const publishedFrom: string | null = m.published?.from ?? null
-    const publishedTo: string | null = m.published?.to ?? null
+    const publishedObj =
+      m.published && typeof m.published === 'object'
+        ? (m.published as Record<string, unknown>)
+        : null
+    const publishedFrom: string | null = typeof publishedObj?.from === 'string' ? publishedObj.from : null
+    const publishedTo: string | null = typeof publishedObj?.to === 'string' ? publishedObj.to : null
 
     return { ...base, mangaStatus, volumes, chapters, publishedFrom, publishedTo }
   } catch {

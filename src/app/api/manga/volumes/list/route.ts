@@ -14,11 +14,13 @@ export async function GET(req: NextRequest) {
 
   const chaptersStr = req.nextUrl.searchParams.get('chapters')
   const chapters = chaptersStr ? Number.parseInt(chaptersStr, 10) : null
+  const fallbackCover = req.nextUrl.searchParams.get('fallback_cover')
 
   const volumes = await getMangaVolumes(
     externalId,
     total !== null && !Number.isNaN(total) ? total : null,
     chapters !== null && !Number.isNaN(chapters) ? chapters : null,
+    fallbackCover,
   )
   return NextResponse.json(volumes)
 }

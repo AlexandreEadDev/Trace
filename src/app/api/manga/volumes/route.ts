@@ -3,6 +3,48 @@ import { createClient } from '@/lib/supabase/server'
 
 export const dynamic = 'force-dynamic'
 
+type ProgressStatus = 'backlog' | 'completed'
+
+async function syncLibraryFromVolumes(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  mangaItemId: string,
+) {
+  const { data: progressRows, error: progressError } = await supabase
+    .from('manga_volume_progress')
+    .select('status')
+    .eq('user_id', userId)
+    .eq('manga_item_id', mangaItemId)
+
+  if (progressError) return { error: progressError.message }
+
+  const statuses = (progressRows ?? []).map((r) => r.status as ProgressStatus)
+  if (statuses.length === 0) {
+    const { error } = await supabase
+      .from('user_libraries')
+      .delete()
+      .eq('user_id', userId)
+      .eq('item_id', mangaItemId)
+    if (error) return { error: error.message }
+    return { ok: true as const }
+  }
+
+  const hasBacklog = statuses.includes('backlog')
+  const status: ProgressStatus = hasBacklog ? 'backlog' : 'completed'
+  const { error } = await supabase
+    .from('user_libraries')
+    .upsert(
+      {
+        user_id: userId,
+        item_id: mangaItemId,
+        status,
+      },
+      { onConflict: 'user_id,item_id' },
+    )
+  if (error) return { error: error.message }
+  return { ok: true as const }
+}
+
 // GET /api/manga/volumes?manga_item_id=...
 // Returns all volume progress rows for the current user and given manga item.
 export async function GET(req: NextRequest) {
@@ -60,6 +102,8 @@ export async function POST(req: NextRequest) {
     .upsert(rows, { onConflict: 'user_id,manga_item_id,volume_number' })
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  const syncResult = await syncLibraryFromVolumes(supabase, user.id, body.manga_item_id)
+  if ('error' in syncResult) return NextResponse.json({ error: syncResult.error }, { status: 500 })
   return NextResponse.json({ ok: true })
 }
 
@@ -95,5 +139,7 @@ export async function DELETE(req: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
+  const syncResult = await syncLibraryFromVolumes(supabase, user.id, body.manga_item_id)
+  if ('error' in syncResult) return NextResponse.json({ error: syncResult.error }, { status: 500 })
   return NextResponse.json({ ok: true })
 }

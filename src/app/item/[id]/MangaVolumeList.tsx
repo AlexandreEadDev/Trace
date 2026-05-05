@@ -8,6 +8,7 @@ import type { VolumeInfo } from '@/lib/catalog/jikan'
 interface MangaVolumeListProps {
   mangaItemId: string
   mangaExternalId: string
+  mangaCoverUrl?: string | null
   totalVolumes?: number | null
   totalChapters?: number | null
 }
@@ -19,7 +20,7 @@ interface VolumeModalData extends VolumeInfo {
   status?: VolumeStatus
 }
 
-export function MangaVolumeList({ mangaItemId, mangaExternalId, totalVolumes, totalChapters }: MangaVolumeListProps) {
+export function MangaVolumeList({ mangaItemId, mangaExternalId, mangaCoverUrl, totalVolumes, totalChapters }: MangaVolumeListProps) {
   const [volumes, setVolumes] = useState<VolumeInfo[]>([])
   const [progress, setProgress] = useState<ProgressMap>({})
   const [loadingVolumes, setLoadingVolumes] = useState(true)
@@ -34,6 +35,7 @@ export function MangaVolumeList({ mangaItemId, mangaExternalId, totalVolumes, to
       const params = new URLSearchParams({ external_id: mangaExternalId })
       if (totalVolumes != null) params.set('total', String(totalVolumes))
       if (totalChapters != null) params.set('chapters', String(totalChapters))
+      if (mangaCoverUrl) params.set('fallback_cover', mangaCoverUrl)
       const res = await fetch(`/api/manga/volumes/list?${params}`)
       if (res.ok) {
         const data: VolumeInfo[] = await res.json()

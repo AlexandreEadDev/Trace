@@ -16,6 +16,11 @@ async function fetchSafe(url: string, ms = 10000): Promise<Response> {
   }
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function toFinitePositiveInt(v: any): number | null {
+  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.floor(v) : null
+}
+
 function normalizeQuery(q: string): string {
   return q.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
 }
@@ -52,8 +57,12 @@ function mangaToItem(m: any): CatalogItem | null {
   if (genreNames.some((g) => ['Hentai', 'Erotica'].includes(g))) return null
 
   const title = m.title_english || m.title
-  const cover = m.images?.jpg?.large_image_url ?? m.images?.jpg?.image_url ?? null
-  if (!cover) return null
+  const cover =
+    m.images?.jpg?.large_image_url ??
+    m.images?.jpg?.image_url ??
+    m.images?.webp?.large_image_url ??
+    m.images?.webp?.image_url ??
+    null
 
   const year: number | null =
     m.published?.prop?.from?.year ?? m.year ?? null
@@ -205,10 +214,19 @@ export async function searchManga(query: string, limit = 24, page = 1, genre?: s
 
 export async function getMangaByExternalId(externalId: string): Promise<CatalogItem | null> {
   try {
-    const res = await fetchSafe(`${BASE}/manga/${externalId}`)
-    if (!res.ok) return null
-    const data = await res.json()
-    const m = data.data
+    // Prefer /full for richer metadata. Fallback to base endpoint if unavailable/rate-limited.
+    let m: any = null
+    const fullRes = await fetchSafe(`${BASE}/manga/${externalId}/full`)
+    if (fullRes.ok) {
+      const fullData = await fullRes.json()
+      m = fullData?.data ?? null
+    } else {
+      const res = await fetchSafe(`${BASE}/manga/${externalId}`)
+      if (!res.ok) return null
+      const data = await res.json()
+      m = data?.data ?? null
+    }
+
     const base = mangaToItem(m)
     if (!base) return null
 
@@ -218,8 +236,8 @@ export async function getMangaByExternalId(externalId: string): Promise<CatalogI
       : statusRaw.toLowerCase().includes('finish') || statusRaw.toLowerCase().includes('complet') ? 'finished'
       : null
 
-    const volumes: number | null = typeof m.volumes === 'number' ? m.volumes : null
-    const chapters: number | null = typeof m.chapters === 'number' ? m.chapters : null
+    const volumes: number | null = toFinitePositiveInt(m.volumes)
+    const chapters: number | null = toFinitePositiveInt(m.chapters)
     const publishedFrom: string | null = m.published?.from ?? null
     const publishedTo: string | null = m.published?.to ?? null
 
@@ -247,7 +265,33 @@ export async function getMangaVolumes(
   externalId: string,
   totalVolumes?: number | null,
   totalChapters?: number | null,
+  fallbackCoverUrl?: string | null,
 ): Promise<VolumeInfo[]> {
+  // If caller does not provide totals, try to resolve them here from /full then /manga.
+  let resolvedTotalVolumes = totalVolumes
+  let resolvedTotalChapters = totalChapters
+  if (resolvedTotalVolumes == null && resolvedTotalChapters == null) {
+    try {
+      const fullRes = await fetchSafe(`${BASE}/manga/${externalId}/full`)
+      if (fullRes.ok) {
+        const full = await fullRes.json()
+        const d = full?.data ?? {}
+        resolvedTotalVolumes = toFinitePositiveInt(d.volumes)
+        resolvedTotalChapters = toFinitePositiveInt(d.chapters)
+      } else {
+        const baseRes = await fetchSafe(`${BASE}/manga/${externalId}`)
+        if (baseRes.ok) {
+          const base = await baseRes.json()
+          const d = base?.data ?? {}
+          resolvedTotalVolumes = toFinitePositiveInt(d.volumes)
+          resolvedTotalChapters = toFinitePositiveInt(d.chapters)
+        }
+      }
+    } catch {
+      // keep unresolved totals
+    }
+  }
+
   try {
     const res = await fetchSafe(`${BASE}/manga/${externalId}/volumes`)
     if (res.ok) {
@@ -255,20 +299,30 @@ export async function getMangaVolumes(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const volumes: any[] = data.data ?? []
       if (volumes.length > 0) {
-        return volumes.map((v) => ({
-          volume_number: v.volume ?? v.mal_id ?? 0,
-          title: v.title ?? null,
-          coverUrl: v.images?.jpg?.image_url ?? v.cover ?? null,
-        }))
+        return volumes
+          .map((v) => ({
+            volume_number: v.volume ?? v.mal_id ?? 0,
+            title: v.title ?? null,
+            coverUrl:
+              v.images?.jpg?.image_url ??
+              v.images?.webp?.image_url ??
+              v.cover ??
+              null,
+          }))
+          .filter((v) => Number.isFinite(v.volume_number) && v.volume_number > 0)
       }
     }
     // Fallback: generate stubs from volumes or estimate from chapters (avg 9 ch/volume)
-    const estimated = totalVolumes ?? (totalChapters ? Math.ceil(totalChapters / 9) : 0)
-    if (estimated > 0) return makeStubs(estimated)
+    const estimated = resolvedTotalVolumes ?? (resolvedTotalChapters ? Math.ceil(resolvedTotalChapters / 9) : 0)
+    if (estimated > 0) {
+      return makeStubs(estimated).map((v) => ({ ...v, coverUrl: fallbackCoverUrl ?? null }))
+    }
     return []
   } catch {
-    const estimated = totalVolumes ?? (totalChapters ? Math.ceil(totalChapters / 9) : 0)
-    if (estimated > 0) return makeStubs(estimated)
+    const estimated = resolvedTotalVolumes ?? (resolvedTotalChapters ? Math.ceil(resolvedTotalChapters / 9) : 0)
+    if (estimated > 0) {
+      return makeStubs(estimated).map((v) => ({ ...v, coverUrl: fallbackCoverUrl ?? null }))
+    }
     return []
   }
 }

@@ -490,6 +490,7 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
           <MangaVolumeList
             mangaItemId={supabaseItemId}
             mangaExternalId={eff.id}
+            mangaCoverUrl={catalogMeta?.coverUrl ?? item.cover_url}
             totalVolumes={catalogMeta?.volumes}
             totalChapters={catalogMeta?.chapters}
           />

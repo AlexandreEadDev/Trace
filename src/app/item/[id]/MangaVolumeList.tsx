@@ -45,7 +45,7 @@ export function MangaVolumeList({ mangaItemId, mangaExternalId, mangaCoverUrl, t
       // keep empty
     }
     setLoadingVolumes(false)
-  }, [mangaExternalId, totalVolumes, totalChapters])
+  }, [mangaExternalId, totalVolumes, totalChapters, mangaCoverUrl])
 
   const fetchProgress = useCallback(async () => {
     try {

@@ -53,8 +53,6 @@ function secondsToHours(seconds: number | undefined): number | null {
 function parseBleedGameRow(raw: HltbBleedGameRow, similarity: number, autoFilterTimes: boolean): ParsedBleedEntry {
   const complexityLvlCombine = raw.comp_lvl_combine === 1
   const complexityLvlSp = raw.comp_lvl_sp === 1
-  const complexityLvlCo = raw.comp_lvl_co === 1
-  const complexityLvlMp = raw.comp_lvl_mp === 1
 
   let mainStory = secondsToHours(raw.comp_main)
   let mainExtra = secondsToHours(raw.comp_plus)

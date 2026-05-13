@@ -230,17 +230,19 @@ export async function getMangaByExternalId(externalId: string): Promise<CatalogI
     const base = mangaToItem(m)
     if (!base) return null
 
-    const statusRaw = typeof m.status === 'string' ? m.status : ''
+    const details: Record<string, unknown> = m && typeof m === 'object' ? m : {}
+
+    const statusRaw = typeof details.status === 'string' ? details.status : ''
     const mangaStatus: 'ongoing' | 'finished' | null =
       statusRaw.toLowerCase().includes('publish') ? 'ongoing'
       : statusRaw.toLowerCase().includes('finish') || statusRaw.toLowerCase().includes('complet') ? 'finished'
       : null
 
-    const volumes: number | null = toFinitePositiveInt(m.volumes)
-    const chapters: number | null = toFinitePositiveInt(m.chapters)
+    const volumes: number | null = toFinitePositiveInt(details.volumes)
+    const chapters: number | null = toFinitePositiveInt(details.chapters)
     const publishedObj =
-      m.published && typeof m.published === 'object'
-        ? (m.published as Record<string, unknown>)
+      details.published && typeof details.published === 'object'
+        ? (details.published as Record<string, unknown>)
         : null
     const publishedFrom: string | null = typeof publishedObj?.from === 'string' ? publishedObj.from : null
     const publishedTo: string | null = typeof publishedObj?.to === 'string' ? publishedObj.to : null

@@ -303,7 +303,29 @@ function FilterStep({
           </button>
 
           {showCustom && (
-            <div className="max-h-52 overflow-y-auto divide-y border-t">
+            <div className="border-t">
+              {/* Select all / deselect all */}
+              <div className="flex items-center justify-between px-4 py-2 bg-muted/30">
+                <span className="text-xs text-muted-foreground">
+                  {state.customIds === null ? entries.length : state.customIds.size}/{entries.length} sélectionné{entries.length !== 1 ? 's' : ''}
+                </span>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => onChange({ ...state, customIds: null })}
+                    className={cn('text-xs font-medium transition-colors', ac.text, 'hover:underline')}
+                  >
+                    Tout cocher
+                  </button>
+                  <span className="text-muted-foreground/40">·</span>
+                  <button
+                    onClick={() => onChange({ ...state, customIds: new Set() })}
+                    className="text-xs font-medium text-muted-foreground hover:text-foreground transition-colors hover:underline"
+                  >
+                    Tout décocher
+                  </button>
+                </div>
+              </div>
+              <div className="max-h-52 overflow-y-auto divide-y">
               {entries.map((e) => {
                 const checked = state.customIds === null || state.customIds.has(e.id)
                 return (
@@ -333,6 +355,7 @@ function FilterStep({
                   </label>
                 )
               })}
+              </div>
             </div>
           )}
         </div>
@@ -598,6 +621,16 @@ export function MovieWheel({ entries, accent }: Props) {
 
   if (entries.length === 0) return null
 
+  // Lock body scroll while modal is open
+  useEffect(() => {
+    if (open) {
+      document.body.style.overflow = 'hidden'
+    } else {
+      document.body.style.overflow = ''
+    }
+    return () => { document.body.style.overflow = '' }
+  }, [open])
+
   const hasFilters = filters.type !== 'all' || filters.genres.length > 0 || filters.customIds !== null
 
   return (
@@ -605,17 +638,16 @@ export function MovieWheel({ entries, accent }: Props) {
       {/* Trigger button */}
       <button
         onClick={openModal}
+        title="Roue du destin"
         className={cn(
-          'flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold text-white shadow-md transition-all hover:scale-105 hover:shadow-lg active:scale-95',
+          'relative flex items-center justify-center rounded-full text-white shadow-md transition-all hover:scale-105 hover:shadow-lg active:scale-95',
+          'h-8 w-8',
           ac.bg
         )}
       >
         <Dices className="h-4 w-4" />
-        Roue du destin
         {hasFilters && (
-          <span className="inline-flex items-center justify-center h-4 min-w-4 rounded-full bg-white/25 px-1 text-[10px] font-bold">
-            ✓
-          </span>
+          <span className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-white border-2 border-white" style={{ backgroundColor: ac.hex }} />
         )}
       </button>
 

@@ -327,11 +327,32 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
 
           {/* Metadata row */}
           <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm text-muted-foreground">
-            {item.genre && (
-              <span className="flex items-center gap-1.5">
-                <Tag className="h-3.5 w-3.5" />{item.genre}
-              </span>
-            )}
+            {(() => {
+              const genres = catalogMeta?.genres?.length
+                ? catalogMeta.genres
+                : item.genre
+                  ? item.genre.split(', ').filter(Boolean)
+                  : null
+              if (!genres?.length) return null
+              const MAX_SHOWN = 5
+              const shown = genres.slice(0, MAX_SHOWN)
+              const overflow = genres.length - MAX_SHOWN
+              return (
+                <span className="flex items-center gap-1.5 flex-wrap">
+                  <Tag className="h-3.5 w-3.5 shrink-0" />
+                  {shown.map((g) => (
+                    <span key={g} className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium">
+                      {g}
+                    </span>
+                  ))}
+                  {overflow > 0 && (
+                    <span className="rounded-full bg-muted/60 px-2 py-0.5 text-xs opacity-70">
+                      +{overflow}
+                    </span>
+                  )}
+                </span>
+              )
+            })()}
             {item.release_year && (
               <span className="flex items-center gap-1.5">
                 <Calendar className="h-3.5 w-3.5" />{item.release_year}

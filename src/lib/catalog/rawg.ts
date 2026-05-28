@@ -41,15 +41,35 @@ function gamePopularity(game: any): number {
   return Math.round(addedScore + mcScore + ratingScore)
 }
 
+// Phrases filtrées telles quelles (substring)
+const EXPLICIT_SUBSTRINGS = [
+  'hentai', 'eroge', 'nukige', 'ecchi', 'adult only', 'adults only',
+  'sex sim', 'porn', 'xxx', 'erotic', 'nsfw',
+]
+// Mots filtrés uniquement en tant que mot entier (évite "Essex", "Vex"…)
+const EXPLICIT_WHOLE_WORDS = ['sex', 'sexe']
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function gameToItem(game: any): CatalogItem {
+function isExplicit(game: any): boolean {
+  const name = String(game.name ?? '').toLowerCase()
+  if (EXPLICIT_SUBSTRINGS.some((k) => name.includes(k))) return true
+  if (EXPLICIT_WHOLE_WORDS.some((w) => new RegExp(`\\b${w}\\b`).test(name))) return true
+  // RAWG ESRB slug for "Adults Only"
+  const esrb: string = game.esrb_rating?.slug ?? ''
+  if (esrb === 'adults-only') return true
+  return false
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function gameToItem(game: any): CatalogItem | null {
+  if (isExplicit(game)) return null
   const year = game.released
     ? Number.parseInt(String(game.released).slice(0, 4), 10)
     : null
   const genreList: string[] = Array.isArray(game.genres)
     ? game.genres.map((g: { name: string }) => g.name).filter(Boolean)
     : []
-  const genre = genreList[0] ?? null
+  const genre = genreList.length > 0 ? genreList.join(', ') : null
   return {
     externalSource: 'rawg',
     externalId: String(game.id),
@@ -65,14 +85,15 @@ function gameToItem(game: any): CatalogItem {
   }
 }
 
-/** Minimum quality gate for search results – filters near-unknown games */
+/** Minimum quality gate for search results – keeps games with any visible signal */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function isQualityGame(game: any): boolean {
   const added: number = typeof game.added === 'number' ? game.added : 0
   const ratingCount: number = typeof game.ratings_count === 'number' ? game.ratings_count : 0
   const hasMeta = typeof game.metacritic === 'number' && game.metacritic > 0
-  // Pass if: well-known (added > 200), has meaningful ratings, or has Metacritic score
-  return added > 200 || ratingCount >= 5 || hasMeta
+  const hasImage = Boolean(game.background_image)
+  // Very permissive: any image + at least 1 signal (added, rating, metacritic)
+  return hasImage && (added > 10 || ratingCount >= 1 || hasMeta)
 }
 
 /** Genre label → RAWG slug */
@@ -98,7 +119,15 @@ export interface PagedResult {
   hasMore: boolean
 }
 
-export async function getTrendingGames(limit = 24, page = 1, genre?: string): Promise<PagedResult> {
+function applyRawgYears(url: URL, yearMin?: number, yearMax?: number) {
+  if (yearMin || yearMax) {
+    const from = yearMin ? `${yearMin}-01-01` : '1970-01-01'
+    const to = yearMax ? `${yearMax}-12-31` : '2099-12-31'
+    url.searchParams.set('dates', `${from},${to}`)
+  }
+}
+
+export async function getTrendingGames(limit = 24, page = 1, genre?: string, yearMin?: number, yearMax?: number): Promise<PagedResult> {
   const key = getKey()
   if (!key) return { items: [], hasMore: false }
 
@@ -108,17 +137,17 @@ export async function getTrendingGames(limit = 24, page = 1, genre?: string): Pr
     url.searchParams.set('page_size', String(limit))
     url.searchParams.set('page', String(page))
     url.searchParams.set('ordering', '-added')
-    url.searchParams.set('metacritic', '60,100')
     url.searchParams.set('fields', 'id,name,background_image,released,genres,metacritic,rating,ratings_count,added')
     if (genre) {
       const slug = RAWG_GENRE_MAP[genre]
       if (slug) url.searchParams.set('genres', slug)
     }
+    applyRawgYears(url, yearMin, yearMax)
 
     const res = await fetchSafe(url.toString())
     if (!res.ok) return { items: [], hasMore: false }
     const data = await res.json()
-    const items = (data.results ?? []).map(gameToItem)
+    const items = (data.results ?? []).map(gameToItem).filter((g: CatalogItem | null): g is CatalogItem => g !== null)
     const hasMore = data.next !== null && data.next !== undefined
     return { items, hasMore }
   } catch {
@@ -126,7 +155,7 @@ export async function getTrendingGames(limit = 24, page = 1, genre?: string): Pr
   }
 }
 
-export async function searchGames(query: string, limit = 24, page = 1, genre?: string): Promise<PagedResult> {
+export async function searchGames(query: string, limit = 24, page = 1, genre?: string, yearMin?: number, yearMax?: number): Promise<PagedResult> {
   const key = getKey()
   if (!key) return { items: [], hasMore: false }
 
@@ -136,12 +165,12 @@ export async function searchGames(query: string, limit = 24, page = 1, genre?: s
     url.searchParams.set('search', normalizeQuery(query))
     url.searchParams.set('page_size', String(Math.min(limit * 2, 40)))
     url.searchParams.set('page', String(page))
-    url.searchParams.set('search_precise', 'false')
-    url.searchParams.set('ordering', '-added')
+    // No ordering param → RAWG returns by search relevance (better for exact title matches)
     if (genre) {
       const slug = RAWG_GENRE_MAP[genre]
       if (slug) url.searchParams.set('genres', slug)
     }
+    applyRawgYears(url, yearMin, yearMax)
 
     const res = await fetchSafe(url.toString())
     if (!res.ok) return { items: [], hasMore: false }
@@ -150,17 +179,21 @@ export async function searchGames(query: string, limit = 24, page = 1, genre?: s
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const all: any[] = data.results ?? []
     const quality = all.filter(isQualityGame)
-    const pool = quality.length >= Math.ceil(limit / 2) ? quality : all
-    // Stable sort: popularity desc, then id ascending as tie-breaker for deterministic results.
+    const pool = quality.length >= Math.ceil(limit / 2) ? quality : all.filter((g) => Boolean(g.background_image))
+
+    // Sort: exact/prefix title match first, then by RAWG's natural relevance order (index in results array)
+    const qNorm = normalizeQuery(query).toLowerCase()
     pool.sort((a, b) => {
-      const diff = gamePopularity(b) - gamePopularity(a)
-      if (diff !== 0) return diff
-      const idA = typeof a.id === 'number' ? a.id : 0
-      const idB = typeof b.id === 'number' ? b.id : 0
-      return idA - idB
+      const aNorm = normalizeQuery(String(a.name ?? '')).toLowerCase()
+      const bNorm = normalizeQuery(String(b.name ?? '')).toLowerCase()
+      const aExact = aNorm === qNorm ? 2 : aNorm.startsWith(qNorm) ? 1 : 0
+      const bExact = bNorm === qNorm ? 2 : bNorm.startsWith(qNorm) ? 1 : 0
+      if (aExact !== bExact) return bExact - aExact
+      // Keep RAWG's relevance order (original index in results)
+      return all.indexOf(a) - all.indexOf(b)
     })
     const hasMore = data.next !== null && data.next !== undefined
-    return { items: pool.slice(0, limit).map(gameToItem), hasMore }
+    return { items: pool.slice(0, limit).map(gameToItem).filter((g: CatalogItem | null): g is CatalogItem => g !== null), hasMore }
   } catch {
     return { items: [], hasMore: false }
   }
@@ -181,6 +214,7 @@ export async function getGameByExternalId(externalId: string): Promise<CatalogIt
     const game = await detailRes.json()
 
     const item = gameToItem(game)
+    if (!item) return null
 
     // Short gameplay clip from the detail response (direct video URL)
     const clipUrl: string | null = game.clip?.clip ?? null
@@ -229,7 +263,7 @@ export async function getGameSeries(externalId: string): Promise<CatalogItem[]> 
     const res = await fetchSafe(`${BASE}/games/${externalId}/game-series?key=${key}&page_size=20`)
     if (!res.ok) return []
     const data = await res.json()
-    return (data.results ?? []).map(gameToItem)
+    return (data.results ?? []).map(gameToItem).filter((g: CatalogItem | null): g is CatalogItem => g !== null)
   } catch {
     return []
   }
@@ -242,7 +276,7 @@ export async function getSuggestedGames(externalId: string): Promise<CatalogItem
     const res = await fetchSafe(`${BASE}/games/${externalId}/suggested?key=${key}&page_size=12`)
     if (!res.ok) return []
     const data = await res.json()
-    return ((data.results ?? []) as ReturnType<typeof gameToItem>[]).filter(Boolean) as CatalogItem[]
+    return (data.results ?? []).map(gameToItem).filter((g: CatalogItem | null): g is CatalogItem => g !== null)
   } catch {
     return []
   }

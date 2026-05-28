@@ -90,7 +90,7 @@ function volumeToItem(v: any): CatalogItem | null {
   const genres: string[] = [...new Set(
     rawCategories.flatMap((c: string) => c.split(' / ').map((s: string) => s.trim()))
   )].filter(Boolean)
-  const genre = genres[0] ?? null
+  const genre = genres.length > 0 ? genres.join(', ') : null
 
   const description: string | null =
     typeof info.description === 'string' ? info.description : null

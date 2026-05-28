@@ -2,11 +2,11 @@
 
 export const dynamic = 'force-dynamic'
 
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, useCallback } from 'react'
 import Link from 'next/link'
 import {
   BookOpen, LibraryBig, Gamepad2, Film, Star, Notebook, ArrowRight,
-  Trophy, BarChart3, CalendarDays, TrendingUp,
+  Trophy, BarChart3, CalendarDays, TrendingUp, RefreshCw, CheckCircle2, AlertCircle,
 } from 'lucide-react'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
@@ -91,12 +91,25 @@ function EntryRow({
           </div>
         )}
       </div>
-      <div className="flex-1 min-w-0">
-        <p className="truncate text-sm font-semibold leading-snug">{item.title}</p>
-        <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-          {item.genre && <span className="text-xs text-muted-foreground">{item.genre}</span>}
-          {item.release_year && <span className="text-xs text-muted-foreground">· {item.release_year}</span>}
-        </div>
+        <div className="flex-1 min-w-0">
+          <p className="truncate text-sm font-semibold leading-snug">{item.title}</p>
+          <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+            {item.genre && item.genre.split(', ').slice(0, 2).map((g) => (
+              <span key={g} className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                {g}
+              </span>
+            ))}
+            {item.genre && item.genre.split(', ').length > 2 && (
+              <span className="text-[10px] text-muted-foreground/60">
+                +{item.genre.split(', ').length - 2}
+              </span>
+            )}
+            {item.release_year && (
+              <span className="text-xs text-muted-foreground">
+                {item.genre ? '· ' : ''}{item.release_year}
+              </span>
+            )}
+          </div>
         {entry.private_notes && (
           <p className="mt-1 text-xs text-muted-foreground line-clamp-1 flex items-center gap-1">
             <Notebook className="h-3 w-3 shrink-0" />
@@ -143,6 +156,8 @@ export default function DashboardPage() {
   const [allReviews, setAllReviews] = useState<{ rating: number; created_at: string }[]>([])
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState<StatusType>('backlog')
+  const [syncState, setSyncState] = useState<'idle' | 'syncing' | 'done' | 'error'>('idle')
+  const [syncStats, setSyncStats] = useState<{ updated: number; total: number } | null>(null)
 
   const year = new Date().getFullYear()
   const hexAccent = ACCENT_HEX[accent] ?? '#D97706'
@@ -199,6 +214,32 @@ export default function DashboardPage() {
     return allEntries.find((e) => e.status === 'completed') ?? allEntries[0] ?? null
   }, [allEntries])
 
+  const refreshGenres = useCallback(async () => {
+    setSyncState('syncing')
+    setSyncStats(null)
+    try {
+      const res = await fetch('/api/admin/refresh-genres', { method: 'POST' })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error ?? 'Erreur serveur')
+      setSyncStats({ updated: json.updated, total: json.total })
+      setSyncState('done')
+      // Reload entries after sync
+      if (json.updated > 0) {
+        const supabase = createClient()
+        const { data: libData } = await supabase
+          .from('user_libraries')
+          .select('*, items(*)')
+          .order('created_at', { ascending: false })
+        const filtered = ((libData ?? []) as LibraryEntryWithItem[]).filter(
+          (e) => e.items && e.items.type === mode
+        )
+        setAllEntries(filtered)
+      }
+    } catch {
+      setSyncState('error')
+    }
+  }, [mode])
+
   const ModeIcon =
     mode === 'book' ? BookOpen : mode === 'manga' ? LibraryBig : mode === 'game' ? Gamepad2 : Film
   const labels = MODE_STATUS_LABELS[mode]
@@ -207,20 +248,65 @@ export default function DashboardPage() {
     <div className="mx-auto max-w-5xl px-4 py-10 sm:px-6 lg:px-8 space-y-10">
 
       {/* ── Header ── */}
-      <div className="flex items-center gap-3">
-        <ModeIcon className={cn('h-7 w-7', `text-${accent}-600`)} />
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Mon Dashboard</h1>
-          <p className="text-sm text-muted-foreground">
-            {mode === 'book'
-              ? 'Ta bibliothèque'
-              : mode === 'manga'
-                ? 'Ta mangathèque'
-                : mode === 'game'
-                  ? 'Ta ludothèque'
-                  : 'Ta cinémathèque'}
-          </p>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <ModeIcon className={cn('h-7 w-7', `text-${accent}-600`)} />
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">Mon Dashboard</h1>
+            <p className="text-sm text-muted-foreground">
+              {mode === 'book'
+                ? 'Ta bibliothèque'
+                : mode === 'manga'
+                  ? 'Ta mangathèque'
+                  : mode === 'game'
+                    ? 'Ta ludothèque'
+                    : 'Ta cinémathèque'}
+            </p>
+          </div>
         </div>
+
+        {/* Sync genres button */}
+        {!loading && allEntries.length > 0 && (
+          <div className="flex flex-col items-end gap-1">
+            <button
+              onClick={refreshGenres}
+              disabled={syncState === 'syncing'}
+              title="Mettre à jour les genres depuis les APIs externes"
+              className={cn(
+                'flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium border transition-all',
+                syncState === 'syncing'
+                  ? 'opacity-50 cursor-not-allowed bg-muted border-transparent text-muted-foreground'
+                  : syncState === 'done'
+                    ? `border-${accent}-200 bg-${accent}-50 text-${accent}-700`
+                    : syncState === 'error'
+                      ? 'border-red-200 bg-red-50 text-red-600'
+                      : 'bg-muted border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground/30'
+              )}
+            >
+              {syncState === 'syncing' ? (
+                <RefreshCw className="h-3 w-3 animate-spin" />
+              ) : syncState === 'done' ? (
+                <CheckCircle2 className="h-3 w-3" />
+              ) : syncState === 'error' ? (
+                <AlertCircle className="h-3 w-3" />
+              ) : (
+                <RefreshCw className="h-3 w-3" />
+              )}
+              {syncState === 'syncing'
+                ? 'Mise à jour…'
+                : syncState === 'done'
+                  ? 'Genres mis à jour'
+                  : syncState === 'error'
+                    ? 'Erreur'
+                    : 'Sync genres'}
+            </button>
+            {syncState === 'done' && syncStats && (
+              <p className="text-[10px] text-muted-foreground">
+                {syncStats.updated}/{syncStats.total} mis à jour
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
       {/* ── REWIND — Ton année ── */}

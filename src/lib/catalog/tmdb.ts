@@ -21,7 +21,7 @@ const TMDB_GENRE_MAP: Record<number, string> = {
   10749: 'Romance',
   878: 'Science-Fiction',
   53: 'Thriller',
-  10752: 'Historique',
+  10752: 'Guerre',
   37: 'Western',
 }
 
@@ -36,6 +36,7 @@ export const TMDB_GENRE_LABEL_TO_ID: Record<string, number> = {
   'Drame': 18,
   'Famille': 10751,
   'Fantaisie': 14,
+  'Guerre': 10752,
   'Historique': 36,
   'Horreur': 27,
   'Musical': 10402,
@@ -104,7 +105,7 @@ function movieToItem(movie: any): CatalogItem {
     : Array.isArray(movie.genre_ids)
     ? movie.genre_ids.map((id: number) => TMDB_GENRE_MAP[id]).filter(Boolean)
     : []
-  const genre = genreList[0] ?? null
+  const genre = genreList.length > 0 ? genreList.join(', ') : null
   const runtime = typeof movie.runtime === 'number' && movie.runtime > 0
     ? movie.runtime
     : null
@@ -184,14 +185,29 @@ function stableTmdbSort(a: any, b: any): number {
   return idA - idB
 }
 
-export async function getTrendingMovies(limit = 24, page = 1): Promise<PagedResult> {
+interface YearRange { yearMin?: number; yearMax?: number }
+
+function applyYearRange(url: URL, { yearMin, yearMax }: YearRange) {
+  if (yearMin) url.searchParams.set('primary_release_date.gte', `${yearMin}-01-01`)
+  if (yearMax) url.searchParams.set('primary_release_date.lte', `${yearMax}-12-31`)
+}
+
+export async function getTrendingMovies(limit = 24, page = 1, years: YearRange = {}): Promise<PagedResult> {
   const key = getKey()
   if (!key) return { items: [], hasMore: false }
 
   try {
-    const url = new URL(`${BASE}/trending/movie/week`)
+    // When a year range is requested, use /discover instead of /trending (which ignores date filters)
+    const hasYearFilter = years.yearMin || years.yearMax
+    const url = hasYearFilter
+      ? new URL(`${BASE}/discover/movie`)
+      : new URL(`${BASE}/trending/movie/week`)
     url.searchParams.set('api_key', key)
     url.searchParams.set('language', 'fr-FR')
+    if (hasYearFilter) {
+      url.searchParams.set('sort_by', 'popularity.desc')
+      applyYearRange(url, years)
+    }
 
     const combined = await fetchTmdbCombined(url, limit, page)
     if (!combined) return { items: [], hasMore: false }
@@ -205,7 +221,7 @@ export async function getTrendingMovies(limit = 24, page = 1): Promise<PagedResu
   }
 }
 
-export async function discoverMoviesByGenre(genreLabel: string, limit = 24, page = 1): Promise<PagedResult> {
+export async function discoverMoviesByGenre(genreLabel: string, limit = 24, page = 1, years: YearRange = {}): Promise<PagedResult> {
   const key = getKey()
   if (!key) return { items: [], hasMore: false }
   const genreId = TMDB_GENRE_LABEL_TO_ID[genreLabel]
@@ -217,6 +233,7 @@ export async function discoverMoviesByGenre(genreLabel: string, limit = 24, page
     url.searchParams.set('with_genres', String(genreId))
     url.searchParams.set('language', 'fr-FR')
     url.searchParams.set('sort_by', 'popularity.desc')
+    applyYearRange(url, years)
 
     const combined = await fetchTmdbCombined(url, limit, page)
     if (!combined) return { items: [], hasMore: false }

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
+import { useRouter, useSearchParams, usePathname } from 'next/navigation'
 import {
   Search, Gamepad2, Film, X, SlidersHorizontal,
   ChevronDown, ChevronLeft, ChevronRight, TrendingUp, BookMarked, LibraryBig,
@@ -324,23 +325,47 @@ const MODE_CONFIG: { value: NavMode; label: string; Icon: React.ComponentType<{ 
 
 export default function CatalogPage() {
   const { mode, setMode, accent } = useMode()
-  const [query, setQuery] = useState('')
+  const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
+
+  // Initialise state from URL on first render
+  const [query, setQuery] = useState(() => searchParams.get('q') ?? '')
   const [rawItems, setRawItems] = useState<CatalogItem[]>([])
   const [loading, setLoading] = useState(true)
-  const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS)
-  const [page, setPage] = useState(1)
+  const [filters, setFilters] = useState<Filters>(() => ({
+    selectedGenres: searchParams.get('genres') ? searchParams.get('genres')!.split(',').filter(Boolean) : [],
+    yearMin: searchParams.get('ymin') ?? '',
+    yearMax: searchParams.get('ymax') ?? '',
+    sort: (searchParams.get('sort') as Filters['sort']) ?? 'trending',
+  }))
+  const [page, setPage] = useState(() => Math.max(1, Number(searchParams.get('page') ?? '1')))
   const [hasNextPage, setHasNextPage] = useState(false)
   const [transitioning, setTransitioning] = useState(false)
   // Trending: map of encodedId → click count
   const [trendingCounts, setTrendingCounts] = useState<Map<string, number>>(new Map())
   const prevMode = useRef(mode)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const debounceYearRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Sync state → URL (called after every fetch so back button restores context)
+  const pushUrl = useCallback((q: string, f: Filters, p: number) => {
+    const params = new URLSearchParams()
+    if (q) params.set('q', q)
+    if (f.selectedGenres.length) params.set('genres', f.selectedGenres.join(','))
+    if (f.yearMin) params.set('ymin', f.yearMin)
+    if (f.yearMax) params.set('ymax', f.yearMax)
+    if (f.sort !== 'trending') params.set('sort', f.sort)
+    if (p > 1) params.set('page', String(p))
+    const qs = params.toString()
+    router.replace(`${pathname}${qs ? '?' + qs : ''}`, { scroll: false })
+  }, [router, pathname])
   const ModeIcon =
     mode === 'book' ? BookMarked : mode === 'manga' ? LibraryBig : mode === 'game' ? Gamepad2 : Film
 
   const abortRef = useRef<AbortController | null>(null)
 
-  const fetchItems = useCallback((q: string, m: NavMode = mode, p = 1, selectedGenres: string[] = []) => {
+  const fetchItems = useCallback((q: string, m: NavMode = mode, p = 1, selectedGenres: string[] = [], yearMin = '', yearMax = '') => {
     abortRef.current?.abort()
     const controller = new AbortController()
     abortRef.current = controller
@@ -352,6 +377,9 @@ export default function CatalogPage() {
       if (q) params.set('q', q)
       params.set('page', String(p))
       if (extra?.genre) params.set('genre', extra.genre)
+      // Year filters — only sent for movie/game (TMDB & RAWG support them server-side)
+      if ((m === 'movie' || m === 'game') && yearMin) params.set('yearMin', yearMin)
+      if ((m === 'movie' || m === 'game') && yearMax) params.set('yearMax', yearMax)
       return params.toString()
     }
 
@@ -453,13 +481,17 @@ export default function CatalogPage() {
     setQuery('')
     setFilters(DEFAULT_FILTERS)
     setPage(1)
-    fetchItems('', mode, 1, [])
+    fetchItems('', mode, 1, [], '', '')
     fetchTrending(mode)
-  }, [mode, fetchItems, fetchTrending])
+    pushUrl('', DEFAULT_FILTERS, 1)
+  }, [mode, fetchItems, fetchTrending, pushUrl])
 
-  // Initial fetch
+  // Initial fetch — use URL-initialised state
+  const didInit = useRef(false)
   useEffect(() => {
-    fetchItems('', mode, 1, [])
+    if (didInit.current) return
+    didInit.current = true
+    fetchItems(query, mode, page, filters.selectedGenres, filters.yearMin, filters.yearMax)
     fetchTrending(mode)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -470,27 +502,44 @@ export default function CatalogPage() {
     if (query.length === 1) return
     debounceRef.current = setTimeout(() => {
       setPage(1)
-      fetchItems(query, mode, 1, filters.selectedGenres)
+      fetchItems(query, mode, 1, filters.selectedGenres, filters.yearMin, filters.yearMax)
+      pushUrl(query, filters, 1)
     }, 600)
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
-  }, [query, fetchItems, mode, filters.selectedGenres])
+  }, [query, fetchItems, mode, filters, pushUrl])
 
-  // Re-fetch server-side when genre selection changes (no search query active)
+  // Re-fetch server-side when genre selection changes
   const prevGenresRef = useRef<string[]>([])
   useEffect(() => {
     const prev = prevGenresRef.current
     const curr = filters.selectedGenres
     if (prev.length === curr.length && prev.every((g, i) => g === curr[i])) return
     prevGenresRef.current = curr
-    // Only trigger server-side genre fetch when there's no active query
     if (query) return
     setPage(1)
-    fetchItems('', mode, 1, curr)
-  }, [filters.selectedGenres, query, mode, fetchItems])
+    fetchItems('', mode, 1, curr, filters.yearMin, filters.yearMax)
+    pushUrl('', { ...filters, selectedGenres: curr }, 1)
+  }, [filters.selectedGenres, query, mode, fetchItems, filters, pushUrl])
+
+  // Re-fetch server-side when year range changes (debounced — user may be typing)
+  const prevYearRef = useRef({ min: '', max: '' })
+  useEffect(() => {
+    const { min, max } = prevYearRef.current
+    if (min === filters.yearMin && max === filters.yearMax) return
+    prevYearRef.current = { min: filters.yearMin, max: filters.yearMax }
+    if (debounceYearRef.current) clearTimeout(debounceYearRef.current)
+    debounceYearRef.current = setTimeout(() => {
+      setPage(1)
+      fetchItems(query, mode, 1, filters.selectedGenres, filters.yearMin, filters.yearMax)
+      pushUrl(query, filters, 1)
+    }, 600)
+    return () => { if (debounceYearRef.current) clearTimeout(debounceYearRef.current) }
+  }, [filters.yearMin, filters.yearMax, query, mode, fetchItems, filters, pushUrl])
 
   const handlePageChange = (newPage: number) => {
     setPage(newPage)
-    fetchItems(query, mode, newPage, filters.selectedGenres)
+    fetchItems(query, mode, newPage, filters.selectedGenres, filters.yearMin, filters.yearMax)
+    pushUrl(query, filters, newPage)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
@@ -522,12 +571,13 @@ export default function CatalogPage() {
         })
       }
     }
-    if (filters.yearMin) {
+    // Year filtering is handled server-side for movie/game (TMDB & RAWG).
+    // For book/manga, apply client-side as a best-effort fallback.
+    if ((mode === 'book' || mode === 'manga') && filters.yearMin) {
       const min = Number.parseInt(filters.yearMin, 10)
-      // Items with unknown year pass through (we can't exclude what we don't know)
       result = result.filter((it) => it.releaseYear == null || it.releaseYear >= min)
     }
-    if (filters.yearMax) {
+    if ((mode === 'book' || mode === 'manga') && filters.yearMax) {
       const max = Number.parseInt(filters.yearMax, 10)
       result = result.filter((it) => it.releaseYear == null || it.releaseYear <= max)
     }
@@ -619,7 +669,7 @@ export default function CatalogPage() {
               )}
             </div>
 
-            <FilterBar mode={mode} filters={filters} onChange={(f) => { setFilters(f); setPage(1) }} accent={accent} />
+            <FilterBar mode={mode} filters={filters} onChange={(f) => { setFilters(f); setPage(1); pushUrl(query, f, 1) }} accent={accent} />
           </div>
         </div>
       </div>

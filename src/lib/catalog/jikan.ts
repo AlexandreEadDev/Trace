@@ -74,17 +74,7 @@ function mangaToItem(m: any): CatalogItem | null {
     ...((m.themes ?? []) as { name: string }[]).map((t) => t.name),
   ].filter(Boolean)
 
-  // Prefer demographic as the primary genre (Shōnen, Seinen…) for better filtering
-  const demographic = Array.isArray(m.demographics) && m.demographics.length > 0
-    ? (m.demographics[0] as { name: string }).name
-    : null
-  const genre: string | null =
-    demographic ??
-    (Array.isArray(m.genres) && m.genres.length > 0
-      ? (m.genres[0] as { name: string }).name
-      : Array.isArray(m.themes) && m.themes.length > 0
-      ? (m.themes[0] as { name: string }).name
-      : null)
+  const genre: string | null = allGenres.length > 0 ? allGenres.join(', ') : null
 
   const authors: string[] = Array.isArray(m.authors)
     ? m.authors.map((a: { name: string }) => a.name).filter(Boolean)

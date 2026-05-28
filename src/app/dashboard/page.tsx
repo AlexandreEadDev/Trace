@@ -18,6 +18,7 @@ import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import { MODE_STATUS_LABELS } from '@/types'
 import type { LibraryEntryWithItem, StatusType, ItemType } from '@/types'
+import { MovieWheel } from '@/components/MovieWheel'
 
 const MONTH_LABELS = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin', 'Juil', 'Aoû', 'Sep', 'Oct', 'Nov', 'Déc']
 const ACCENT_HEX: Record<string, string> = {
@@ -315,6 +316,11 @@ export default function DashboardPage() {
           accent={accent}
         />
       </div>
+
+      {/* ── Movie wheel (movie mode only) ── */}
+      {mode === 'movie' && !loading && byStatus('backlog').length > 0 && (
+        <MovieWheel entries={byStatus('backlog')} accent={accent} />
+      )}
 
       {/* ── Library list ── */}
       <section className="space-y-3">

@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams, usePathname } from 'next/navigation'
 import {
@@ -323,7 +323,7 @@ const MODE_CONFIG: { value: NavMode; label: string; Icon: React.ComponentType<{ 
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 
-export default function CatalogPage() {
+function CatalogContent() {
   const { mode, setMode, accent } = useMode()
   const router = useRouter()
   const pathname = usePathname()
@@ -760,5 +760,13 @@ export default function CatalogPage() {
         </div>
       </div>
     </div>
+  )
+}
+
+export default function CatalogPage() {
+  return (
+    <Suspense>
+      <CatalogContent />
+    </Suspense>
   )
 }

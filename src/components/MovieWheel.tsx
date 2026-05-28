@@ -619,9 +619,7 @@ export function MovieWheel({ entries, accent }: Props) {
     setStep('wheel')
   }
 
-  if (entries.length === 0) return null
-
-  // Lock body scroll while modal is open
+  // Lock body scroll while modal is open (must be before any early return)
   useEffect(() => {
     if (open) {
       document.body.style.overflow = 'hidden'
@@ -632,6 +630,8 @@ export function MovieWheel({ entries, accent }: Props) {
   }, [open])
 
   const hasFilters = filters.type !== 'all' || filters.genres.length > 0 || filters.customIds !== null
+
+  if (entries.length === 0) return null
 
   return (
     <>

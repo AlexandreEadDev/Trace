@@ -317,16 +317,16 @@ export default function DashboardPage() {
         />
       </div>
 
-      {/* ── Movie wheel (movie mode only) ── */}
-      {mode === 'movie' && !loading && byStatus('backlog').length > 0 && (
-        <MovieWheel entries={byStatus('backlog')} accent={accent} />
-      )}
-
       {/* ── Library list ── */}
       <section className="space-y-3">
         {/* Pill toggle — same style as header ModeSwitch */}
         <div className="flex items-center justify-between">
-          <h2 className="text-base font-semibold text-muted-foreground">Ma collection</h2>
+          <div className="flex items-center gap-3">
+            <h2 className="text-base font-semibold text-muted-foreground">Ma collection</h2>
+            {mode === 'movie' && !loading && byStatus('backlog').length > 0 && (
+              <MovieWheel entries={byStatus('backlog')} accent={accent} />
+            )}
+          </div>
           <div role="group" className="flex items-center gap-1 rounded-full bg-muted p-1">
             {(['backlog', 'completed'] as StatusType[]).map((s) => {
               const accentActive =

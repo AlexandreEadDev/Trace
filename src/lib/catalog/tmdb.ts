@@ -1,7 +1,12 @@
 import type { CatalogItem } from './types'
+import { buildProviderWatchUrl } from './watchProviderUrls'
 
 const BASE = 'https://api.themoviedb.org/3'
 const IMG_BASE = 'https://image.tmdb.org/t/p/w500'
+const PROVIDER_LOGO_BASE = 'https://image.tmdb.org/t/p/w45'
+
+/** Default region for watch-provider availability (ISO 3166-1 alpha-2). */
+const WATCH_REGION = process.env.TMDB_WATCH_REGION ?? 'FR'
 
 /** TMDB genre ID → French label (used for trending results that only return genre_ids) */
 const TMDB_GENRE_MAP: Record<number, string> = {
@@ -352,6 +357,127 @@ export async function getSimilarMovies(externalId: string): Promise<CatalogItem[
 
 export function hasTmdbKey(): boolean {
   return Boolean(process.env.TMDB_API_KEY)
+}
+
+export type WatchOfferType = 'flatrate' | 'rent' | 'buy' | 'free' | 'ads'
+
+export interface WatchProviderOffer {
+  providerId: number
+  name: string
+  logoUrl: string | null
+  type: WatchOfferType
+  price: number | null
+  currency: string | null
+  watchUrl: string
+}
+
+export interface MovieWatchProviders {
+  region: string
+  link: string | null
+  offers: WatchProviderOffer[]
+}
+
+interface TmdbWatchProviderRaw {
+  provider_id?: number
+  provider_name?: string
+  logo_path?: string | null
+  display_priority?: number
+  price?: string | number
+  currency?: string
+}
+
+interface TmdbWatchRegionRaw {
+  link?: string
+  flatrate?: TmdbWatchProviderRaw[]
+  rent?: TmdbWatchProviderRaw[]
+  buy?: TmdbWatchProviderRaw[]
+  free?: TmdbWatchProviderRaw[]
+  ads?: TmdbWatchProviderRaw[]
+}
+
+function parsePrice(raw: string | number | undefined): number | null {
+  if (raw === undefined || raw === null || raw === '') return null
+  const n = typeof raw === 'number' ? raw : Number.parseFloat(String(raw).replace(',', '.'))
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
+function mapWatchOffers(
+  list: TmdbWatchProviderRaw[] | undefined,
+  type: WatchOfferType,
+  movieTitle: string,
+  region: string,
+): WatchProviderOffer[] {
+  if (!Array.isArray(list)) return []
+  return list
+    .filter((p) => typeof p.provider_id === 'number' && Boolean(p.provider_name))
+    .map((p) => ({
+      providerId: p.provider_id!,
+      name: p.provider_name!,
+      logoUrl: p.logo_path ? `${PROVIDER_LOGO_BASE}${p.logo_path}` : null,
+      type,
+      price: type === 'rent' || type === 'buy' ? parsePrice(p.price) : null,
+      currency: type === 'rent' || type === 'buy' ? (p.currency ?? null) : null,
+      watchUrl: buildProviderWatchUrl(p.provider_id!, p.provider_name!, movieTitle, region, type),
+    }))
+}
+
+function pickWatchRegion(
+  results: Record<string, TmdbWatchRegionRaw> | undefined,
+): { region: string; data: TmdbWatchRegionRaw } | null {
+  if (!results || typeof results !== 'object') return null
+
+  const preferred = results[WATCH_REGION]
+  if (preferred) return { region: WATCH_REGION, data: preferred }
+
+  const firstEntry = Object.entries(results).find(([, data]) => {
+    const total =
+      (data.flatrate?.length ?? 0) +
+      (data.rent?.length ?? 0) +
+      (data.buy?.length ?? 0) +
+      (data.free?.length ?? 0) +
+      (data.ads?.length ?? 0)
+    return total > 0
+  })
+  if (!firstEntry) return null
+  return { region: firstEntry[0], data: firstEntry[1] }
+}
+
+export async function getMovieWatchProviders(
+  externalId: string,
+  movieTitle: string,
+): Promise<MovieWatchProviders | null> {
+  const key = getKey()
+  if (!key) return null
+
+  try {
+    const res = await fetchSafe(
+      `${BASE}/movie/${externalId}/watch/providers?api_key=${key}`,
+    )
+    if (!res.ok) return null
+
+    const json = (await res.json()) as { results?: Record<string, TmdbWatchRegionRaw> }
+    const picked = pickWatchRegion(json.results)
+    if (!picked) return null
+
+    const { region, data } = picked
+    const offers: WatchProviderOffer[] = [
+      ...mapWatchOffers(data.flatrate, 'flatrate', movieTitle, region),
+      ...mapWatchOffers(data.rent, 'rent', movieTitle, region),
+      ...mapWatchOffers(data.buy, 'buy', movieTitle, region),
+      ...mapWatchOffers(data.free, 'free', movieTitle, region),
+      ...mapWatchOffers(data.ads, 'ads', movieTitle, region),
+    ]
+
+    if (offers.length === 0) return null
+
+    return {
+      region,
+      link: typeof data.link === 'string' ? data.link : null,
+      offers,
+    }
+  } catch {
+    return null
+  }
 }
 
 function normalizeQuery(q: string): string {

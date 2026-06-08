@@ -1,4 +1,4 @@
-export type ItemType = 'book' | 'game' | 'movie' | 'manga'
+export type ItemType = 'book' | 'game' | 'movie' | 'manga' | 'tv'
 export type StatusType = 'backlog' | 'completed'
 
 export interface Item {
@@ -64,5 +64,9 @@ export const MODE_STATUS_LABELS: Record<ItemType, Record<StatusType, string>> = 
   manga: {
     backlog: 'À lire',
     completed: 'Lu',
+  },
+  tv: {
+    backlog: 'À voir',
+    completed: 'Vu',
   },
 }

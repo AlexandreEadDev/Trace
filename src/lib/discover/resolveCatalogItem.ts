@@ -5,6 +5,7 @@ import { getGameByExternalId as getFtgGame } from '@/lib/catalog/freetogame'
 import { getGameByExternalId as getRawgGame } from '@/lib/catalog/rawg'
 import { getMovieByExternalId } from '@/lib/catalog/tmdb'
 import { getMangaByExternalId } from '@/lib/catalog/jikan'
+import { getTvByExternalId } from '@/lib/catalog/tmdb-tv'
 
 export async function resolveCatalogItem(
   source: CatalogSource,
@@ -23,6 +24,8 @@ export async function resolveCatalogItem(
       return getMovieByExternalId(externalId)
     case 'jikan':
       return getMangaByExternalId(externalId)
+    case 'tmdb_tv':
+      return getTvByExternalId(externalId)
     default:
       return null
   }

@@ -29,6 +29,7 @@ const ACCENT_STYLES: Record<ModeAccent, { bg: string; light: string; text: strin
   violet: { bg: 'bg-violet-600', light: 'bg-violet-50', text: 'text-violet-600', border: 'border-violet-300', hex: '#7C3AED' },
   indigo: { bg: 'bg-indigo-600', light: 'bg-indigo-50', text: 'text-indigo-600', border: 'border-indigo-300', hex: '#4F46E5' },
   rose: { bg: 'bg-rose-600', light: 'bg-rose-50', text: 'text-rose-600', border: 'border-rose-300', hex: '#E11D48' },
+  teal: { bg: 'bg-teal-600', light: 'bg-teal-50', text: 'text-teal-600', border: 'border-teal-300', hex: '#0D9488' },
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

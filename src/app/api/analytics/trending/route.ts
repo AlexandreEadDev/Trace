@@ -8,6 +8,7 @@ const TYPE_PREFIXES: Record<string, string[]> = {
   manga: ['jikan__'],
   game: ['rawg__', 'freetogame__'],
   movie: ['tmdb__'],
+  tv: ['tmdb_tv__'],
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000

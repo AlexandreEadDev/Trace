@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from 'rea
 import Link from 'next/link'
 import { useRouter, useSearchParams, usePathname } from 'next/navigation'
 import {
-  Search, Gamepad2, Film, X, SlidersHorizontal,
+  Search, Gamepad2, Film, Tv, X, SlidersHorizontal,
   ChevronDown, ChevronLeft, ChevronRight, TrendingUp, BookMarked, LibraryBig,
 } from 'lucide-react'
 import { useMode } from '@/context/ModeContext'
@@ -19,6 +19,7 @@ import {
   MANGA_CATALOG_GENRES as MANGA_GENRES,
   GAME_GENRES,
   MOVIE_GENRES,
+  TV_GENRES,
 } from '@/lib/catalog/genres'
 import type { GenreDef } from '@/lib/catalog/genres'
 
@@ -31,6 +32,7 @@ const GENRE_LISTS: Record<NavMode, GenreDef[]> = {
   manga: MANGA_GENRES,
   game: GAME_GENRES,
   movie: MOVIE_GENRES,
+  tv: TV_GENRES,
 }
 
 // ─── Cover image ─────────────────────────────────────────────────────────────
@@ -264,7 +266,7 @@ function FilterBar({ mode, filters, onChange, accent }: { mode: NavMode; filters
             </div>
           )}
 
-          {(mode === 'game' || mode === 'movie') && (
+          {(mode === 'game' || mode === 'movie' || mode === 'tv') && (
             <div className="space-y-2">
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Genre</p>
               <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
@@ -319,6 +321,7 @@ const MODE_CONFIG: { value: NavMode; label: string; Icon: React.ComponentType<{ 
   { value: 'manga', label: 'Mangas', Icon: LibraryBig, activeClass: 'bg-violet-600 text-white' },
   { value: 'game', label: 'Jeux', Icon: Gamepad2, activeClass: 'bg-indigo-600 text-white' },
   { value: 'movie', label: 'Films', Icon: Film, activeClass: 'bg-rose-600 text-white' },
+  { value: 'tv', label: 'Séries', Icon: Tv, activeClass: 'bg-teal-600 text-white' },
 ]
 
 // ─── Main page ────────────────────────────────────────────────────────────────
@@ -361,7 +364,7 @@ function CatalogContent() {
     router.replace(`${pathname}${qs ? '?' + qs : ''}`, { scroll: false })
   }, [router, pathname])
   const ModeIcon =
-    mode === 'book' ? BookMarked : mode === 'manga' ? LibraryBig : mode === 'game' ? Gamepad2 : Film
+    mode === 'book' ? BookMarked : mode === 'manga' ? LibraryBig : mode === 'game' ? Gamepad2 : mode === 'tv' ? Tv : Film
 
   const abortRef = useRef<AbortController | null>(null)
 
@@ -378,8 +381,8 @@ function CatalogContent() {
       params.set('page', String(p))
       if (extra?.genre) params.set('genre', extra.genre)
       // Year filters — only sent for movie/game (TMDB & RAWG support them server-side)
-      if ((m === 'movie' || m === 'game') && yearMin) params.set('yearMin', yearMin)
-      if ((m === 'movie' || m === 'game') && yearMax) params.set('yearMax', yearMax)
+      if ((m === 'movie' || m === 'game' || m === 'tv') && yearMin) params.set('yearMin', yearMin)
+      if ((m === 'movie' || m === 'game' || m === 'tv') && yearMax) params.set('yearMax', yearMax)
       return params.toString()
     }
 
@@ -439,6 +442,22 @@ function CatalogContent() {
         .finally(() => {
           setLoading(false)
         })
+    } else if (m === 'tv') {
+      const tvGenre = selectedGenres.find((g) => TV_GENRES.some((b) => b.label === g))
+      fetch(`/api/catalog/tv?${buildParams({ genre: tvGenre })}`, { signal: controller.signal })
+        .then((r) => r.json())
+        .then((data: { items?: CatalogItem[]; hasMore?: boolean }) => {
+          const items = data?.items ?? []
+          setRawItems(items)
+          setHasNextPage(data?.hasMore ?? false)
+        })
+        .catch((e) => {
+          if (e?.name !== 'AbortError') {
+            setRawItems([])
+            setHasNextPage(false)
+          }
+        })
+        .finally(() => setLoading(false))
     } else {
       const genre = selectedGenres[0]
       const base = m === 'game' ? '/api/catalog/games' : '/api/catalog/movies'
@@ -658,7 +677,9 @@ function CatalogContent() {
                       ? 'Rechercher un manga…'
                       : mode === 'game'
                         ? 'Rechercher un jeu (ex: Fallout 3)…'
-                        : 'Rechercher un film…'
+                        : mode === 'tv'
+                          ? 'Rechercher une série…'
+                          : 'Rechercher un film…'
                 }
                 className="w-full rounded-lg border bg-background py-2 pl-9 pr-9 text-sm outline-none focus:ring-2 focus:ring-offset-1 transition"
               />
@@ -688,7 +709,9 @@ function CatalogContent() {
                     ? 'Catalogue — Mangas'
                     : mode === 'game'
                       ? 'Catalogue — Jeux vidéo'
-                      : 'Catalogue — Films'}
+                      : mode === 'tv'
+                        ? 'Catalogue — Séries'
+                        : 'Catalogue — Films'}
               {!query && filters.sort === 'trending' && (
                 <span className="inline-flex items-center gap-1 rounded-full bg-orange-100 px-2 py-0.5 text-xs font-medium text-orange-700">
                   <TrendingUp className="h-3 w-3" />
@@ -719,7 +742,7 @@ function CatalogContent() {
                   const hasActiveFilters = filters.selectedGenres.length > 0 || !!filters.yearMin || !!filters.yearMax
                   if (query) return `Aucun résultat pour "${query}"`
                   if (hasActiveFilters) return 'Aucun résultat pour ces filtres'
-                  if (mode === 'movie') return 'Ajoutez TMDB_API_KEY dans .env.local pour les films'
+                  if (mode === 'movie' || mode === 'tv') return 'Ajoutez TMDB_API_KEY dans .env.local pour les films et séries'
                   if (mode === 'game') return 'Ajoutez RAWG_API_KEY dans .env.local pour tous les jeux'
                   if (mode === 'book') {
                     return 'Aucun livre renvoyé par Google Books (souvent quota 429 sans clé API). Ajoute GOOGLE_BOOKS_API_KEY dans .env.local puis redémarre le serveur, ou réessaie plus tard.'

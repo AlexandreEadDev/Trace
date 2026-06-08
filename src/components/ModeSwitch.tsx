@@ -1,6 +1,6 @@
 'use client'
 
-import { BookOpen, LibraryBig, Gamepad2, Film } from 'lucide-react'
+import { BookOpen, LibraryBig, Gamepad2, Film, Tv } from 'lucide-react'
 import { useMode } from '@/context/ModeContext'
 import type { NavMode } from '@/context/ModeContext'
 import { cn } from '@/lib/utils'
@@ -15,6 +15,7 @@ const MODES: {
   { value: 'manga', label: 'Mangas', Icon: LibraryBig, activeClass: 'bg-violet-600' },
   { value: 'game', label: 'Jeux', Icon: Gamepad2, activeClass: 'bg-indigo-600' },
   { value: 'movie', label: 'Films', Icon: Film, activeClass: 'bg-rose-600' },
+  { value: 'tv', label: 'Séries', Icon: Tv, activeClass: 'bg-teal-600' },
 ]
 
 export function ModeSwitch() {

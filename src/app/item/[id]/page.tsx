@@ -12,13 +12,16 @@ import { getBookByExternalId as getOlBook } from '@/lib/catalog/openlibrary'
 import { getBookByExternalId as getGbBook, getBookSeries, getSimilarBooks, findBookByTitleAuthor } from '@/lib/catalog/googlebooks'
 import { getGameByExternalId as getFtgGame } from '@/lib/catalog/freetogame'
 import { getGameByExternalId as getRawgGame, getGameSeries, getSuggestedGames } from '@/lib/catalog/rawg'
-import { getMovieByExternalId, getMovieCollection, getSimilarMovies } from '@/lib/catalog/tmdb'
+import { getMovieByExternalId, getMovieCollection, getMovieWatchProviders, getSimilarMovies } from '@/lib/catalog/tmdb'
+import { getTvByExternalId, getSimilarTv } from '@/lib/catalog/tmdb-tv'
 import { getMangaByExternalId, getMangaRelations, getMangaRecommendations } from '@/lib/catalog/jikan'
 import { ExpandableText } from './ExpandableText'
 import { TrailerEmbed } from './TrailerEmbed'
+import { WatchProviders } from './WatchProviders'
 import { GameMedia } from './GameMedia'
 import { RelatedItems } from './RelatedItems'
 import { MangaVolumeList } from './MangaVolumeList'
+import { TvEpisodeList } from './TvEpisodeList'
 import { getHltbData } from '@/lib/catalog/hltb'
 import { cn } from '@/lib/utils'
 import type { Item, Review } from '@/types'
@@ -133,6 +136,7 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
       // Re-fetch catalog meta for fresh external data (duration, scores, etc.)
       if (external.source === 'rawg') catalogMeta = await getRawgGame(external.id)
       else if (external.source === 'tmdb') catalogMeta = await getMovieByExternalId(external.id)
+      else if (external.source === 'tmdb_tv') catalogMeta = await getTvByExternalId(external.id)
       else if (external.source === 'openlibrary') catalogMeta = await getOlBook(external.id)
       else if (external.source === 'googlebooks') catalogMeta = await getGbBook(external.id)
       else if (external.source === 'jikan') catalogMeta = await getMangaByExternalId(external.id)
@@ -143,6 +147,7 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
       else if (external.source === 'rawg') fetched = await getRawgGame(external.id)
       else if (external.source === 'freetogame') fetched = await getFtgGame(external.id)
       else if (external.source === 'tmdb') fetched = await getMovieByExternalId(external.id)
+      else if (external.source === 'tmdb_tv') fetched = await getTvByExternalId(external.id)
       else if (external.source === 'jikan') fetched = await getMangaByExternalId(external.id)
 
       if (!fetched) notFound()
@@ -181,7 +186,7 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
     // Hydration: when arriving from a Supabase UUID (e.g. Dashboard link), reconstruct
     // the external descriptor so the page can fetch trailer/screenshots/synopsis/related.
     if (item.external_source && item.external_id) {
-      const validSources: CatalogSource[] = ['openlibrary', 'googlebooks', 'freetogame', 'rawg', 'tmdb', 'jikan']
+      const validSources: CatalogSource[] = ['openlibrary', 'googlebooks', 'freetogame', 'rawg', 'tmdb', 'tmdb_tv', 'jikan']
       if (validSources.includes(item.external_source as CatalogSource)) {
         effectiveExternal = {
           source: item.external_source as CatalogSource,
@@ -190,6 +195,7 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
         const ext = effectiveExternal
         if (ext.source === 'rawg') catalogMeta = await getRawgGame(ext.id)
         else if (ext.source === 'tmdb') catalogMeta = await getMovieByExternalId(ext.id)
+        else if (ext.source === 'tmdb_tv') catalogMeta = await getTvByExternalId(ext.id)
         else if (ext.source === 'openlibrary') catalogMeta = await getOlBook(ext.id)
         else if (ext.source === 'googlebooks') catalogMeta = await getGbBook(ext.id)
         else if (ext.source === 'jikan') catalogMeta = await getMangaByExternalId(ext.id)
@@ -246,7 +252,7 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
   }
 
   // Fetch HLTB, related/series, and "voir aussi" data in parallel
-  const [hltb, relatedItems, seeAlsoItems] = await Promise.all([
+  const [hltb, relatedItems, seeAlsoItems, watchProviders] = await Promise.all([
     item.type === 'game' ? getHltbData(item.title) : Promise.resolve(null),
     eff
       ? eff.source === 'rawg'
@@ -264,15 +270,20 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
         ? getSuggestedGames(eff.id)
         : eff.source === 'tmdb'
         ? getSimilarMovies(eff.id)
+        : eff.source === 'tmdb_tv'
+        ? getSimilarTv(eff.id)
         : eff.source === 'jikan'
         ? getMangaRecommendations(eff.id)
         : eff.source === 'googlebooks' || eff.source === 'openlibrary'
         ? getSimilarBooks(catalogMeta?.authors, catalogMeta?.genre)
         : Promise.resolve([])
-      : Promise.resolve([]),
+        : Promise.resolve([]),
+    item.type === 'movie' && eff?.source === 'tmdb'
+      ? getMovieWatchProviders(eff.id, item.title)
+      : Promise.resolve(null),
   ])
 
-  const isBookLike = item.type === 'book' || item.type === 'manga'
+  const isBookLike = item.type === 'book' || item.type === 'manga' || item.type === 'tv'
 
   const accent = item.type === 'book'
     ? ('amber' as const)
@@ -280,7 +291,9 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
       ? ('violet' as const)
       : item.type === 'game'
         ? ('indigo' as const)
-        : ('rose' as const)
+        : item.type === 'tv'
+          ? ('teal' as const)
+          : ('rose' as const)
 
   const accentClass = item.type === 'book'
     ? { from: 'from-amber-400', to: 'to-amber-600', star: 'fill-amber-500 text-amber-500' }
@@ -288,17 +301,28 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
       ? { from: 'from-violet-400', to: 'to-violet-600', star: 'fill-violet-500 text-violet-500' }
       : item.type === 'game'
         ? { from: 'from-indigo-400', to: 'to-indigo-600', star: 'fill-indigo-500 text-indigo-500' }
-        : { from: 'from-rose-400', to: 'to-rose-600', star: 'fill-rose-500 text-rose-500' }
+        : item.type === 'tv'
+          ? { from: 'from-teal-400', to: 'to-teal-600', star: 'fill-teal-500 text-teal-500' }
+          : { from: 'from-rose-400', to: 'to-rose-600', star: 'fill-rose-500 text-rose-500' }
 
-  const duration = item.type !== 'game' && item.type !== 'manga'
+  const durationRaw = item.type !== 'game' && item.type !== 'manga'
     ? formatDuration(catalogMeta?.durationMinutes ?? item.duration_minutes)
     : null
+  const duration = durationRaw && item.type === 'tv' ? `${durationRaw}/ép.` : durationRaw
   const metacritic = catalogMeta?.metacritic ?? null
   const tmdbScore = catalogMeta?.tmdbScore ?? null
   const tmdbVoteCount = catalogMeta?.tmdbVoteCount ?? null
   const hasHltb = hltb && (hltb.mainStory || hltb.mainExtra || hltb.completionist)
 
-  const typeLabel = item.type === 'book' ? 'Livre' : item.type === 'game' ? 'Jeu vidéo' : item.type === 'manga' ? 'Manga' : 'Film'
+  const typeLabel = item.type === 'book'
+    ? 'Livre'
+    : item.type === 'game'
+      ? 'Jeu vidéo'
+      : item.type === 'manga'
+        ? 'Manga'
+        : item.type === 'tv'
+          ? 'Série TV'
+          : 'Film'
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-10 sm:px-6 lg:px-8 space-y-10">
@@ -365,6 +389,40 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
               </span>
             )}
           </div>
+
+          {/* TV metadata */}
+          {item.type === 'tv' && catalogMeta && (
+            <div className="flex flex-wrap items-center gap-2">
+              {catalogMeta.tvStatus && (
+                <span className={cn(
+                  'inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold',
+                  catalogMeta.tvStatus === 'ongoing'
+                    ? 'bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-300'
+                    : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+                )}>
+                  {catalogMeta.tvStatus === 'ongoing' ? 'En cours' : 'Terminée'}
+                </span>
+              )}
+              {catalogMeta.seasonCount != null && (
+                <span className="text-xs text-muted-foreground">
+                  {catalogMeta.seasonCount} saison{catalogMeta.seasonCount > 1 ? 's' : ''}
+                </span>
+              )}
+              {catalogMeta.episodeCount != null && (
+                <span className="text-xs text-muted-foreground">
+                  {catalogMeta.episodeCount} épisode{catalogMeta.episodeCount > 1 ? 's' : ''}
+                </span>
+              )}
+              {catalogMeta.publishedFrom && (
+                <span className="text-xs text-muted-foreground">
+                  {new Date(catalogMeta.publishedFrom).toLocaleDateString('fr-FR', { year: 'numeric', month: 'short' })}
+                  {catalogMeta.publishedTo && catalogMeta.tvStatus === 'finished'
+                    ? ` → ${new Date(catalogMeta.publishedTo).toLocaleDateString('fr-FR', { year: 'numeric', month: 'short' })}`
+                    : catalogMeta.tvStatus === 'ongoing' ? ' → …' : ''}
+                </span>
+              )}
+            </div>
+          )}
 
           {/* Manga metadata */}
           {item.type === 'manga' && catalogMeta && (
@@ -493,7 +551,7 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
         </div>
       </section>
 
-      {/* Synopsis — books and manga */}
+      {/* Synopsis — books, manga and TV */}
       {isBookLike && catalogMeta?.description && (
         <>
           <Separator />
@@ -518,11 +576,32 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
         </>
       )}
 
-      {/* Movie trailer */}
-      {item.type === 'movie' && catalogMeta?.trailerKey && (
+      {/* TV episode list */}
+      {item.type === 'tv' && supabaseItemId && eff?.source === 'tmdb_tv' && (
+        <>
+          <Separator />
+          <TvEpisodeList
+            showItemId={supabaseItemId}
+            showExternalId={eff.id}
+            seriesTmdbScore={catalogMeta?.tmdbScore}
+            seriesTmdbVotes={catalogMeta?.tmdbVoteCount}
+          />
+        </>
+      )}
+
+      {/* Movie / TV trailer */}
+      {(item.type === 'movie' || item.type === 'tv') && catalogMeta?.trailerKey && (
         <>
           <Separator />
           <TrailerEmbed trailerKey={catalogMeta.trailerKey} title={item.title} />
+        </>
+      )}
+
+      {/* Streaming / rent / buy availability */}
+      {item.type === 'movie' && watchProviders && (
+        <>
+          <Separator />
+          <WatchProviders data={watchProviders} />
         </>
       )}
 

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { BookOpen, LibraryBig, Gamepad2, Film, Star, ArrowRight, Search, Trophy, TrendingUp, Sparkles } from 'lucide-react'
+import { BookOpen, LibraryBig, Gamepad2, Film, Tv, Star, ArrowRight, Search, Trophy, TrendingUp, Sparkles } from 'lucide-react'
 import { useMode } from '@/context/ModeContext'
 import type { NavMode } from '@/context/ModeContext'
 import type { ModeAccent } from '@/context/ModeContext'
@@ -79,6 +79,22 @@ const MODE_CONFIG = {
     ctaDesc: 'Milliers de films référencés avec notes et critiques.',
     ctaBg: 'bg-rose-50 border-rose-100',
     apiEndpoint: '/api/catalog/movies',
+  },
+  tv: {
+    Icon: Tv,
+    label: 'Sériethèque',
+    tagline: 'Découvre des séries, note tes épisodes, suis ta progression.',
+    heroName: 'Trace',
+    gradient: 'from-teal-50 via-white to-cyan-50',
+    badge: 'bg-teal-100 text-teal-700',
+    btn: 'bg-teal-600 hover:bg-teal-700',
+    iconBg: 'bg-teal-600 -rotate-3',
+    trendTitle: '📺 Tendances — Séries',
+    bestTitle: '🏆 Mieux notées — Séries',
+    ctaTitle: 'Trouve ta prochaine série',
+    ctaDesc: 'Des milliers de séries référencées avec notes et saisons.',
+    ctaBg: 'bg-teal-50 border-teal-100',
+    apiEndpoint: '/api/catalog/tv',
   },
 } satisfies Record<NavMode, object>
 
@@ -540,8 +556,8 @@ export function HomeContent() {
                 ))
               : (
                 <p className="text-sm text-muted-foreground py-8 px-1">
-                  {mode === 'movie'
-                    ? 'Ajoutez TMDB_API_KEY dans .env.local pour les films.'
+                  {mode === 'movie' || mode === 'tv'
+                    ? 'Ajoutez TMDB_API_KEY dans .env.local pour les films et séries.'
                     : mode === 'game'
                       ? 'Ajoutez RAWG_API_KEY dans .env.local pour tous les jeux.'
                       : mode === 'manga'

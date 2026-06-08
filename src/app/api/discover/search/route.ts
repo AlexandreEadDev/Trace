@@ -5,6 +5,7 @@ import type { DiscoverSearchResult } from '@/lib/discover/types'
 import { searchBooks } from '@/lib/catalog/googlebooks'
 import { searchManga } from '@/lib/catalog/jikan'
 import { searchMovies } from '@/lib/catalog/tmdb'
+import { searchTv } from '@/lib/catalog/tmdb-tv'
 import { searchGames as searchGamesRawg } from '@/lib/catalog/rawg'
 import { searchGames as searchGamesFreetogame } from '@/lib/catalog/freetogame'
 
@@ -27,6 +28,7 @@ function rpcRowToResult(row: RpcSearchRow): DiscoverSearchResult {
     'freetogame',
     'rawg',
     'tmdb',
+    'tmdb_tv',
     'jikan',
   ]
   const catalogId =
@@ -62,10 +64,11 @@ function catalogToSearchResult(
 }
 
 async function searchExternalParallel(q: string): Promise<DiscoverSearchResult[]> {
-  const [books, manga, movies, rawg, ftg] = await Promise.all([
+  const [books, manga, movies, tv, rawg, ftg] = await Promise.all([
     searchBooks(q, 12, 1).then((r) => r.items),
     searchManga(q, 12, 1).then((r) => r.items),
     searchMovies(q, 12, 1).then((r) => r.items),
+    searchTv(q, 8, 1).then((r) => r.items),
     searchGamesRawg(q, 12, 1).then((r) => r.items),
     searchGamesFreetogame(q),
   ])
@@ -83,6 +86,7 @@ async function searchExternalParallel(q: string): Promise<DiscoverSearchResult[]
   push(books)
   push(manga)
   push(movies)
+  push(tv)
   push(games)
   return merged.slice(0, 40)
 }

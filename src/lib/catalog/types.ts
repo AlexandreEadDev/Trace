@@ -1,10 +1,10 @@
-export type CatalogSource = 'openlibrary' | 'googlebooks' | 'freetogame' | 'rawg' | 'tmdb' | 'jikan'
+export type CatalogSource = 'openlibrary' | 'googlebooks' | 'freetogame' | 'rawg' | 'tmdb' | 'tmdb_tv' | 'jikan'
 
 export interface CatalogItem {
   externalSource: CatalogSource
   externalId: string
   title: string
-  type: 'book' | 'game' | 'movie' | 'manga'
+  type: 'book' | 'game' | 'movie' | 'manga' | 'tv'
   genre: string | null
   /** All genre/demographic tags from the source (used for filter matching) */
   genres?: string[]
@@ -23,6 +23,12 @@ export interface CatalogItem {
   description?: string | null
   /** Manga publication status */
   mangaStatus?: 'ongoing' | 'finished' | null
+  /** TV airing status */
+  tvStatus?: 'ongoing' | 'finished' | null
+  /** Total season count (TV) */
+  seasonCount?: number | null
+  /** Total episode count (TV) */
+  episodeCount?: number | null
   /** Total volume count (manga) */
   volumes?: number | null
   /** Total chapter count (manga) */
@@ -64,7 +70,7 @@ export function decodeCatalogId(
   if (idx === -1) return null
   const source = encoded.slice(0, idx) as CatalogSource
   const id = decodeURIComponent(encoded.slice(idx + 2))
-  const valid: CatalogSource[] = ['openlibrary', 'googlebooks', 'freetogame', 'rawg', 'tmdb', 'jikan']
+  const valid: CatalogSource[] = ['openlibrary', 'googlebooks', 'freetogame', 'rawg', 'tmdb', 'tmdb_tv', 'jikan']
   if (!valid.includes(source)) return null
   return { source, id }
 }

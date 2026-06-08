@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic'
 import { useEffect, useState, useMemo, useCallback } from 'react'
 import Link from 'next/link'
 import {
-  BookOpen, LibraryBig, Gamepad2, Film, Star, Notebook, ArrowRight,
+  BookOpen, LibraryBig, Gamepad2, Film, Tv, Star, Notebook, ArrowRight,
   Trophy, BarChart3, CalendarDays, TrendingUp, RefreshCw, CheckCircle2, AlertCircle,
 } from 'lucide-react'
 import {
@@ -26,6 +26,7 @@ const ACCENT_HEX: Record<string, string> = {
   violet: '#7C3AED',
   indigo: '#4F46E5',
   rose: '#E11D48',
+  teal: '#0D9488',
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -241,7 +242,7 @@ export default function DashboardPage() {
   }, [mode])
 
   const ModeIcon =
-    mode === 'book' ? BookOpen : mode === 'manga' ? LibraryBig : mode === 'game' ? Gamepad2 : Film
+    mode === 'book' ? BookOpen : mode === 'manga' ? LibraryBig : mode === 'game' ? Gamepad2 : mode === 'tv' ? Tv : Film
   const labels = MODE_STATUS_LABELS[mode]
 
   return (
@@ -260,7 +261,9 @@ export default function DashboardPage() {
                   ? 'Ta mangathèque'
                   : mode === 'game'
                     ? 'Ta ludothèque'
-                    : 'Ta cinémathèque'}
+                    : mode === 'tv'
+                      ? 'Ta sériethèque'
+                      : 'Ta cinémathèque'}
             </p>
           </div>
         </div>

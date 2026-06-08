@@ -9,7 +9,7 @@ export interface GenreDef {
   matches: string[]
 }
 
-export type CatalogMode = 'book' | 'manga' | 'game' | 'movie'
+export type CatalogMode = 'book' | 'manga' | 'game' | 'movie' | 'tv'
 
 export const BOOK_GENRES: GenreDef[] = [
   { label: 'Roman', matches: ['fiction', 'novel', 'roman', 'literary'] },
@@ -80,11 +80,36 @@ export const MOVIE_GENRES: GenreDef[] = [
   { label: 'Western', matches: ['western'] },
 ]
 
+/**
+ * TV catalog filters — labels align with `tmdb-tv-genres.ts` discover mapping.
+ * Horreur uses TMDB keywords (no native TV genre); other labels use TV genre IDs.
+ */
+export const TV_GENRES: GenreDef[] = [
+  { label: 'Action', matches: ['action'] },
+  { label: 'Comédie', matches: ['comedy', 'comédie', 'comedie'] },
+  { label: 'Drame', matches: ['drama', 'drame'] },
+  { label: 'Science-Fiction', matches: ['science fiction', 'sci-fi', 'science-fiction', 'science-fiction & fantastique'] },
+  { label: 'Animation', matches: ['animation', 'animé', 'anime'] },
+  { label: 'Horreur', matches: ['horror', 'horreur'] },
+  { label: 'Romance', matches: ['romance'] },
+  { label: 'Thriller', matches: ['thriller'] },
+  { label: 'Documentaire', matches: ['documentary', 'documentaire'] },
+  { label: 'Aventure', matches: ['adventure', 'aventure', 'action & adventure'] },
+  { label: 'Fantaisie', matches: ['fantasy', 'fantaisie', 'fantastique'] },
+  { label: 'Crime / Policier', matches: ['crime', 'policier', 'detective'] },
+  { label: 'Famille', matches: ['family', 'famille', 'familial'] },
+  { label: 'Historique', matches: ['history', 'historical', 'historique', 'war & politics'] },
+  { label: 'Guerre', matches: ['war', 'guerre'] },
+  { label: 'Mystère', matches: ['mystery', 'mystère', 'mystere'] },
+  { label: 'Western', matches: ['western'] },
+]
+
 export const GENRE_LISTS_BY_MODE: Record<CatalogMode, GenreDef[]> = {
   book: [...BOOK_GENRES],
   manga: [...MANGA_CATALOG_GENRES],
   game: GAME_GENRES,
   movie: MOVIE_GENRES,
+  tv: TV_GENRES,
 }
 
 function normalize(s: string): string {

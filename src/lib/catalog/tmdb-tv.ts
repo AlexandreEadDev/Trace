@@ -131,9 +131,9 @@ export async function discoverTvByGenre(genreLabel: string, limit = 24, page = 1
     const res = await fetchSafe(url.toString())
     if (!res.ok) return { items: [], hasMore: false }
     const data = await res.json()
-    let items = (data.results ?? []).filter(isQualityTv).slice(0, limit).map(tvToItem)
+    let items: CatalogItem[] = (data.results ?? []).filter(isQualityTv).slice(0, limit).map(tvToItem)
     if (filter.withKeywords) {
-      items = items.map((item) => {
+      items = items.map((item: CatalogItem) => {
         const genres = item.genres ?? []
         const hasHorror = genres.some((g) => g.toLowerCase().includes('horreur'))
         if (hasHorror) return item

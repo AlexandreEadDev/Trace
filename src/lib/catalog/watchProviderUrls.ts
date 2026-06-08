@@ -93,8 +93,9 @@ export function buildProviderWatchUrl(
   providerName: string,
   movieTitle: string,
   region: string,
-  _offerType: WatchOfferType,
+  offerType: WatchOfferType,
 ): string {
+  void offerType
   const title = encodeURIComponent(movieTitle.trim())
   const builder = PROVIDER_URL_BUILDERS[providerId]
   if (builder) return builder(title, region)

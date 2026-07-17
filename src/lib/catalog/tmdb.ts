@@ -160,34 +160,63 @@ async function fetchTmdbPage(url: URL, page: number): Promise<TmdbPage | null> {
   }
 }
 
-/**
- * Fetch enough TMDB results to satisfy `limit`. TMDB pages are 20 items, so when
- * limit > 20 we transparently merge two consecutive pages and trim. Stable order:
- * we keep TMDB's natural order from the requested page first, then pad.
- */
-async function fetchTmdbCombined(url: URL, limit: number, page: number): Promise<TmdbPage | null> {
-  const first = await fetchTmdbPage(url, page)
-  if (!first) return null
-  if (first.results.length >= limit || first.totalPages <= page) {
-    return first
-  }
-  const second = await fetchTmdbPage(url, page + 1)
-  if (!second) return first
-  return {
-    results: [...first.results, ...second.results],
-    page: first.page,
-    // hasMore: there are still pages beyond the second fetched page
-    totalPages: second.totalPages,
-  }
-}
+const TMDB_PAGE_SIZE = 20
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function stableTmdbSort(a: any, b: any): number {
-  const diff = moviePopularity(b) - moviePopularity(a)
-  if (diff !== 0) return diff
-  const idA = typeof a.id === 'number' ? a.id : 0
-  const idB = typeof b.id === 'number' ? b.id : 0
-  return idA - idB
+/**
+ * Fetch a non-overlapping window of TMDB results for UI pagination.
+ * TMDB always returns 20 items per page; our catalog uses `limit` (e.g. 24).
+ * Mapping UI page N → global offset (N-1)*limit avoids the old bug where UI
+ * page N fetched TMDB pages N+(N+1), so page 2 repeated most of page 1.
+ */
+async function fetchTmdbCombined(
+  url: URL,
+  limit: number,
+  page: number
+): Promise<(TmdbPage & { hasMore: boolean }) | null> {
+  const startOffset = (Math.max(1, page) - 1) * limit
+  let tmdbPage = Math.floor(startOffset / TMDB_PAGE_SIZE) + 1
+  const skip = startOffset % TMDB_PAGE_SIZE
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const collected: any[] = []
+  let totalPages = 1
+
+  while (collected.length < skip + limit) {
+    if (collected.length > 0 && tmdbPage > totalPages) break
+    const fetched = await fetchTmdbPage(url, tmdbPage)
+    if (!fetched) {
+      if (collected.length === 0) return null
+      break
+    }
+    totalPages = fetched.totalPages
+    collected.push(...fetched.results)
+    if (tmdbPage >= totalPages) break
+    tmdbPage++
+  }
+
+  // Dedupe by TMDB id in case adjacent pages somehow overlap
+  const seen = new Set<number>()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const unique: any[] = []
+  for (const movie of collected) {
+    const id = typeof movie?.id === 'number' ? movie.id : null
+    if (id != null) {
+      if (seen.has(id)) continue
+      seen.add(id)
+    }
+    unique.push(movie)
+  }
+
+  const results = unique.slice(skip, skip + limit)
+  const nextOffset = startOffset + results.length
+  const nextTmdbPage = Math.floor(nextOffset / TMDB_PAGE_SIZE) + 1
+  const hasMore = results.length === limit && nextTmdbPage <= totalPages
+
+  return {
+    results,
+    page,
+    totalPages,
+    hasMore,
+  }
 }
 
 interface YearRange { yearMin?: number; yearMax?: number }
@@ -218,9 +247,7 @@ export async function getTrendingMovies(limit = 24, page = 1, years: YearRange =
     if (!combined) return { items: [], hasMore: false }
 
     const items = combined.results.slice(0, limit).map(movieToItem)
-    const fetchedPages = combined.results.length > 20 ? page + 1 : page
-    const hasMore = fetchedPages < combined.totalPages
-    return { items, hasMore }
+    return { items, hasMore: combined.hasMore }
   } catch {
     return { items: [], hasMore: false }
   }
@@ -247,9 +274,9 @@ export async function discoverMoviesByGenre(genreLabel: string, limit = 24, page
       .filter(isQualityMovie)
       .slice(0, limit)
       .map(movieToItem)
-    const fetchedPages = combined.results.length > 20 ? page + 1 : page
-    const hasMore = fetchedPages < combined.totalPages
-    return { items, hasMore }
+    // After quality filter we may have fewer than `limit`; still use window hasMore
+    // so pagination advances correctly through the discover feed.
+    return { items, hasMore: combined.hasMore }
   } catch {
     return { items: [], hasMore: false }
   }
@@ -268,16 +295,15 @@ export async function searchMovies(query: string, limit = 24, page = 1): Promise
     const combined = await fetchTmdbCombined(url, limit, page)
     if (!combined) return { items: [], hasMore: false }
 
+    // Keep TMDB search relevance order — do NOT re-sort by popularity
+    // (that was pulling unrelated high-pop titles above actual matches).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const all: any[] = combined.results
     const quality = all.filter(isQualityMovie)
     const pool = quality.length >= Math.ceil(limit / 2)
       ? quality
       : all.filter((m) => Boolean(m.poster_path))
-    pool.sort(stableTmdbSort)
-    const fetchedPages = combined.results.length > 20 ? page + 1 : page
-    const hasMore = fetchedPages < combined.totalPages
-    return { items: pool.slice(0, limit).map(movieToItem), hasMore }
+    return { items: pool.slice(0, limit).map(movieToItem), hasMore: combined.hasMore }
   } catch {
     return { items: [], hasMore: false }
   }

@@ -367,13 +367,34 @@ function CatalogContent() {
     mode === 'book' ? BookMarked : mode === 'manga' ? LibraryBig : mode === 'game' ? Gamepad2 : mode === 'tv' ? Tv : Film
 
   const abortRef = useRef<AbortController | null>(null)
+  const fetchGenRef = useRef(0)
 
   const fetchItems = useCallback((q: string, m: NavMode = mode, p = 1, selectedGenres: string[] = [], yearMin = '', yearMax = '') => {
     abortRef.current?.abort()
     const controller = new AbortController()
     abortRef.current = controller
+    const gen = ++fetchGenRef.current
 
     setLoading(true)
+    // Drop stale browse results immediately when searching so they can't
+    // flash (or stick) under a "Résultats pour …" header.
+    if (q.trim()) setRawItems([])
+
+    const applyResult = (items: CatalogItem[], hasMore: boolean) => {
+      if (controller.signal.aborted || gen !== fetchGenRef.current) return
+      setRawItems(items)
+      setHasNextPage(hasMore)
+      setLoading(false)
+    }
+
+    const applyError = (e: unknown) => {
+      if (gen !== fetchGenRef.current) return
+      const name = e && typeof e === 'object' && 'name' in e ? String((e as { name?: string }).name) : ''
+      if (name === 'AbortError') return
+      setRawItems([])
+      setHasNextPage(false)
+      setLoading(false)
+    }
 
     const buildParams = (extra?: { genre?: string }) => {
       const params = new URLSearchParams()
@@ -399,23 +420,9 @@ function CatalogContent() {
               booksJsonLen: booksData?.items?.length ?? 'missing',
             })
           }
-          const books: CatalogItem[] = booksData?.items ?? []
-          setRawItems(books)
-          setHasNextPage(booksData?.hasMore ?? false)
+          applyResult(booksData?.items ?? [], booksData?.hasMore ?? false)
         })
-        .catch((e) => {
-          if (e?.name !== 'AbortError') {
-            catalogDebug('page/fetch livres ERROR', {
-              name: e?.name,
-              message: e instanceof Error ? e.message : String(e),
-            })
-            setRawItems([])
-            setHasNextPage(false)
-          }
-        })
-        .finally(() => {
-          setLoading(false)
-        })
+        .catch(applyError)
     } else if (m === 'manga') {
       const mangaGenre = selectedGenres.find((g) => MANGA_GENRES.some((b) => b.label === g))
       fetch(`/api/catalog/manga?${buildParams({ genre: mangaGenre })}`, { signal: controller.signal })
@@ -429,35 +436,17 @@ function CatalogContent() {
               mangaJsonLen: mangaData?.items?.length ?? 'missing',
             })
           }
-          const manga: CatalogItem[] = mangaData?.items ?? []
-          setRawItems(manga)
-          setHasNextPage(mangaData?.hasMore ?? false)
+          applyResult(mangaData?.items ?? [], mangaData?.hasMore ?? false)
         })
-        .catch((e) => {
-          if (e?.name !== 'AbortError') {
-            setRawItems([])
-            setHasNextPage(false)
-          }
-        })
-        .finally(() => {
-          setLoading(false)
-        })
+        .catch(applyError)
     } else if (m === 'tv') {
       const tvGenre = selectedGenres.find((g) => TV_GENRES.some((b) => b.label === g))
       fetch(`/api/catalog/tv?${buildParams({ genre: tvGenre })}`, { signal: controller.signal })
         .then((r) => r.json())
         .then((data: { items?: CatalogItem[]; hasMore?: boolean }) => {
-          const items = data?.items ?? []
-          setRawItems(items)
-          setHasNextPage(data?.hasMore ?? false)
+          applyResult(data?.items ?? [], data?.hasMore ?? false)
         })
-        .catch((e) => {
-          if (e?.name !== 'AbortError') {
-            setRawItems([])
-            setHasNextPage(false)
-          }
-        })
-        .finally(() => setLoading(false))
+        .catch(applyError)
     } else {
       const genre = selectedGenres[0]
       const base = m === 'game' ? '/api/catalog/games' : '/api/catalog/movies'
@@ -465,18 +454,10 @@ function CatalogContent() {
         .then((r) => r.json())
         .then((data) => {
           const items = Array.isArray(data) ? data : (data?.items ?? [])
-          setRawItems(items)
           const hasMore = typeof data?.hasMore === 'boolean' ? data.hasMore : items.length >= PAGE_SIZE
-          setHasNextPage(hasMore)
-          setLoading(false)
+          applyResult(items, hasMore)
         })
-        .catch((e) => {
-          if (e?.name !== 'AbortError') {
-            setRawItems([])
-            setHasNextPage(false)
-            setLoading(false)
-          }
-        })
+        .catch(applyError)
     }
   }, [mode])
 
@@ -600,9 +581,10 @@ function CatalogContent() {
       const max = Number.parseInt(filters.yearMax, 10)
       result = result.filter((it) => it.releaseYear == null || it.releaseYear <= max)
     }
-    if (filters.sort === 'trending') {
+    if (filters.sort === 'trending' && !query.trim()) {
       // Hybrid score = external popularity (0–100) + Trace click boost
       // click boost: log(n+1) × 8  → 1 click ≈ +5.5, 10 clicks ≈ +18, 100 clicks ≈ +37
+      // Skip while searching: keep server relevance order.
       result.sort((a, b) => {
         const idA = encodeCatalogId(a.externalSource, a.externalId)
         const idB = encodeCatalogId(b.externalSource, b.externalId)
@@ -641,7 +623,7 @@ function CatalogContent() {
     }
 
     return result
-  }, [rawItems, filters, trendingCounts, mode])
+  }, [rawItems, filters, trendingCounts, mode, query])
 
   return (
     <div className="min-h-screen">

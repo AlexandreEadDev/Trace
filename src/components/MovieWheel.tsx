@@ -42,6 +42,39 @@ function easeOut(t: number) {
   return 1 - Math.pow(1 - t, 4)
 }
 
+function shuffle<T>(arr: T[]): T[] {
+  const copy = [...arr]
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[copy[i], copy[j]] = [copy[j], copy[i]]
+  }
+  return copy
+}
+
+/** Collapse duplicate library rows for the same external title. */
+function dedupeWheelEntries(entries: LibraryEntryWithItem[]): LibraryEntryWithItem[] {
+  const seen = new Set<string>()
+  const out: LibraryEntryWithItem[] = []
+  for (const entry of entries) {
+    const item = entry.items
+    if (!item) continue
+    const key =
+      item.external_source && item.external_id
+        ? `${item.external_source}:${item.external_id}`
+        : item.id
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(entry)
+  }
+  return out
+}
+
+function sampleSegments(pool: LibraryEntryWithItem[]): LibraryEntryWithItem[] {
+  const unique = dedupeWheelEntries(pool)
+  if (unique.length <= MAX_SEGMENTS) return shuffle(unique)
+  return shuffle(unique).slice(0, MAX_SEGMENTS)
+}
+
 function genreMatchesLabel(genre: string, label: string): boolean {
   const def = MOVIE_GENRES.find((g) => g.label === label)
   if (!def) return false
@@ -171,7 +204,7 @@ function FilterStep({
   }, [entries])
 
   const filteredCount = useMemo(() => {
-    let pool = entries
+    let pool = dedupeWheelEntries(entries)
     if (state.type === 'animation') pool = pool.filter((e) => isAnimation(e.items.genre))
     else if (state.type === 'film') pool = pool.filter((e) => !isAnimation(e.items.genre))
     if (state.genres.length > 0) pool = pool.filter((e) => matchesGenres(e.items.genre, state.genres, state.genreMode))
@@ -394,11 +427,13 @@ function WheelStep({
   segments,
   onBack,
   onClose,
+  onRelaunch,
   accent,
 }: {
   segments: LibraryEntryWithItem[]
   onBack: () => void
   onClose: () => void
+  onRelaunch: () => void
   accent: ModeAccent
 }) {
   const ac = ACCENT_STYLES[accent] ?? ACCENT_STYLES.rose
@@ -563,7 +598,7 @@ function WheelStep({
             Modifier les filtres
           </button>
           <button
-            onClick={spin}
+            onClick={onRelaunch}
             className={cn(
               'flex items-center gap-2 rounded-full px-5 py-2 text-sm font-semibold text-white transition-all',
               `${ac.bg} hover:scale-105 active:scale-95`
@@ -598,6 +633,7 @@ export function MovieWheel({ entries, accent }: Props) {
   const [step, setStep] = useState<'filters' | 'wheel'>('filters')
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS)
   const [segments, setSegments] = useState<LibraryEntryWithItem[]>([])
+  const uniqueEntries = useMemo(() => dedupeWheelEntries(entries), [entries])
 
   const openModal = () => {
     setStep('filters')
@@ -606,18 +642,23 @@ export function MovieWheel({ entries, accent }: Props) {
 
   const closeModal = () => setOpen(false)
 
-  const handleValidate = () => {
-    // Compute filtered pool
-    let pool = entries
+  const buildPool = useCallback(() => {
+    let pool = uniqueEntries
     if (filters.type === 'animation') pool = pool.filter((e) => isAnimation(e.items.genre))
     else if (filters.type === 'film') pool = pool.filter((e) => !isAnimation(e.items.genre))
     if (filters.genres.length > 0) pool = pool.filter((e) => matchesGenres(e.items.genre, filters.genres, filters.genreMode))
     if (filters.customIds !== null) pool = pool.filter((e) => filters.customIds!.has(e.id))
+    return pool
+  }, [uniqueEntries, filters])
 
-    // Sample segments
-    const sample = pool.length <= MAX_SEGMENTS ? pool : [...pool].sort(() => Math.random() - 0.5).slice(0, MAX_SEGMENTS)
-    setSegments(sample)
+  const handleValidate = () => {
+    setSegments(sampleSegments(buildPool()))
     setStep('wheel')
+  }
+
+  const handleRelaunch = () => {
+    // Fresh sample so Relancer doesn't loop the same few titles
+    setSegments(sampleSegments(buildPool()))
   }
 
   // Lock body scroll while modal is open (must be before any early return)
@@ -632,7 +673,7 @@ export function MovieWheel({ entries, accent }: Props) {
 
   const hasFilters = filters.type !== 'all' || filters.genres.length > 0 || filters.customIds !== null
 
-  if (entries.length === 0) return null
+  if (uniqueEntries.length === 0) return null
 
   return (
     <>
@@ -665,7 +706,7 @@ export function MovieWheel({ entries, accent }: Props) {
           <div className="relative z-10 w-full max-w-md bg-background rounded-2xl shadow-2xl border overflow-hidden flex flex-col max-h-[90vh]">
             {step === 'filters' ? (
               <FilterStep
-                entries={entries}
+                entries={uniqueEntries}
                 state={filters}
                 onChange={setFilters}
                 onValidate={handleValidate}
@@ -678,6 +719,7 @@ export function MovieWheel({ entries, accent }: Props) {
                 segments={segments}
                 onBack={() => setStep('filters')}
                 onClose={closeModal}
+                onRelaunch={handleRelaunch}
                 accent={accent}
               />
             )}

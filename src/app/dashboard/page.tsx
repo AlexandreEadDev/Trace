@@ -29,6 +29,32 @@ const ACCENT_HEX: Record<string, string> = {
   teal: '#0D9488',
 }
 
+/** Prefer completed + newest when the same external title was added under multiple item rows. */
+function dedupeLibraryEntries(entries: LibraryEntryWithItem[]): LibraryEntryWithItem[] {
+  const byKey = new Map<string, LibraryEntryWithItem>()
+  for (const entry of entries) {
+    const item = entry.items
+    if (!item) continue
+    const key =
+      item.external_source && item.external_id
+        ? `${item.external_source}:${item.external_id}`
+        : item.id
+    const prev = byKey.get(key)
+    if (!prev) {
+      byKey.set(key, entry)
+      continue
+    }
+    const preferCompleted = entry.status === 'completed' && prev.status !== 'completed'
+    const sameStatusNewer =
+      entry.status === prev.status &&
+      new Date(entry.created_at).getTime() > new Date(prev.created_at).getTime()
+    if (preferCompleted || sameStatusNewer) byKey.set(key, entry)
+  }
+  return Array.from(byKey.values()).sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  )
+}
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 function monthIndex(date: string) {
@@ -165,25 +191,39 @@ export default function DashboardPage() {
 
   useEffect(() => {
     const supabase = createClient()
-    setLoading(true)
+    let cancelled = false
 
-    Promise.all([
-      supabase
-        .from('user_libraries')
-        .select('*, items(*)')
-        .order('created_at', { ascending: false }),
-      supabase
-        .from('reviews')
-        .select('rating, created_at')
-        .order('created_at', { ascending: false }),
-    ]).then(([{ data: libData }, { data: revData }]) => {
-      const filtered = ((libData ?? []) as LibraryEntryWithItem[]).filter(
-        (e) => e.items && e.items.type === mode
-      )
-      setAllEntries(filtered)
-      setAllReviews((revData ?? []) as { rating: number; created_at: string }[])
-      setLoading(false)
-    })
+    const load = (showSpinner: boolean) => {
+      if (showSpinner) setLoading(true)
+      Promise.all([
+        supabase
+          .from('user_libraries')
+          .select('*, items(*)')
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('reviews')
+          .select('rating, created_at')
+          .order('created_at', { ascending: false }),
+      ]).then(([{ data: libData }, { data: revData }]) => {
+        if (cancelled) return
+        const filtered = ((libData ?? []) as LibraryEntryWithItem[]).filter(
+          (e) => e.items && e.items.type === mode
+        )
+        setAllEntries(dedupeLibraryEntries(filtered))
+        setAllReviews((revData ?? []) as { rating: number; created_at: string }[])
+        setLoading(false)
+      })
+    }
+
+    load(true)
+
+    // Silent refetch when returning from an item page (status may have changed).
+    const onFocus = () => load(false)
+    window.addEventListener('focus', onFocus)
+    return () => {
+      cancelled = true
+      window.removeEventListener('focus', onFocus)
+    }
   }, [mode])
 
   const byStatus = (status: StatusType) => allEntries.filter((e) => e.status === status)
@@ -234,7 +274,7 @@ export default function DashboardPage() {
         const filtered = ((libData ?? []) as LibraryEntryWithItem[]).filter(
           (e) => e.items && e.items.type === mode
         )
-        setAllEntries(filtered)
+        setAllEntries(dedupeLibraryEntries(filtered))
       }
     } catch {
       setSyncState('error')

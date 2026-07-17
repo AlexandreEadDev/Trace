@@ -109,10 +109,13 @@ export function PersonalSpace({ itemId, itemType }: PersonalSpaceProps) {
   const [saving, setSaving] = useState(false)
   const [quickLoading, setQuickLoading] = useState(false)
   const [loading, setLoading] = useState(true)
+  // Catalog ids (tmdb__…) are not valid FKs — status would save nowhere useful.
+  const hasValidItemId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(itemId)
 
   useEffect(() => {
     const supabase = createClient()
     async function load() {
+      if (!hasValidItemId) { setLoading(false); return }
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) { setLoading(false); return }
       setUserId(user.id)
@@ -129,7 +132,7 @@ export function PersonalSpace({ itemId, itemType }: PersonalSpaceProps) {
       setLoading(false)
     }
     load()
-  }, [itemId])
+  }, [itemId, hasValidItemId])
 
   // Debounce note autosave
   useEffect(() => {
@@ -151,7 +154,7 @@ export function PersonalSpace({ itemId, itemType }: PersonalSpaceProps) {
   }, [notes, notesDirty, userId, libraryEntry])
 
   const quickAdd = async (status: StatusType) => {
-    if (!userId) return
+    if (!userId || !hasValidItemId) return
     setQuickLoading(true)
     const supabase = createClient()
     const { data } = await supabase
@@ -177,6 +180,16 @@ export function PersonalSpace({ itemId, itemType }: PersonalSpaceProps) {
   }
 
   if (loading) return <div className="h-32 animate-pulse rounded-xl border bg-muted" />
+
+  if (!hasValidItemId) {
+    return (
+      <div className={cn('rounded-xl border-2 border-dashed p-6 text-center', `border-${accent}-200`)}>
+        <p className="text-sm text-muted-foreground">
+          Impossible d&apos;enregistrer le statut pour ce titre (fiche non synchronisée). Recharge la page.
+        </p>
+      </div>
+    )
+  }
 
   if (!userId) {
     return (

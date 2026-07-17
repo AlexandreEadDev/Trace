@@ -160,9 +160,22 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
         .select('*')
         .maybeSingle()
 
-      if (upserted) {
-        item = upserted as Item
-        supabaseItemId = upserted.id
+      // Upsert can return null (RLS / Prefer headers) even when the row exists —
+      // always resolve to a real UUID so PersonalSpace never gets a catalog id.
+      let resolved = upserted
+      if (!resolved) {
+        const { data: existing } = await supabase
+          .from('items')
+          .select('*')
+          .eq('external_source', fetched.externalSource)
+          .eq('external_id', fetched.externalId)
+          .maybeSingle()
+        resolved = existing
+      }
+
+      if (resolved) {
+        item = resolved as Item
+        supabaseItemId = resolved.id
       } else {
         item = {
           id: rawId,

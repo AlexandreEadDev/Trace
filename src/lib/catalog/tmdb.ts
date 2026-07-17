@@ -148,7 +148,7 @@ interface TmdbPage {
   totalPages: number
 }
 
-async function fetchTmdbPage(url: URL, page: number): Promise<TmdbPage | null> {
+async function fetchTmdbPage(url: URL, page: number): Promise<(TmdbPage & { totalResults: number }) | null> {
   url.searchParams.set('page', String(page))
   const res = await fetchSafe(url.toString())
   if (!res.ok) return null
@@ -157,10 +157,13 @@ async function fetchTmdbPage(url: URL, page: number): Promise<TmdbPage | null> {
     results: data.results ?? [],
     page: data.page ?? page,
     totalPages: data.total_pages ?? 1,
+    totalResults: typeof data.total_results === 'number' ? data.total_results : 0,
   }
 }
 
 const TMDB_PAGE_SIZE = 20
+/** TMDB rejects page > 500 on most list endpoints. */
+const TMDB_MAX_PAGE = 500
 
 /**
  * Fetch a non-overlapping window of TMDB results for UI pagination.
@@ -179,37 +182,47 @@ async function fetchTmdbCombined(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const collected: any[] = []
   let totalPages = 1
+  let totalResults = 0
 
+  // Keep requesting TMDB pages until we can fill skip+limit raw slots
+  // (trending lists sometimes repeat ids across adjacent pages — we top up).
   while (collected.length < skip + limit) {
-    if (collected.length > 0 && tmdbPage > totalPages) break
+    // Only enforce totalPages after the first successful fetch (it starts at 1).
+    if (collected.length > 0 && tmdbPage > Math.min(totalPages, TMDB_MAX_PAGE)) break
+    if (tmdbPage > TMDB_MAX_PAGE) break
     const fetched = await fetchTmdbPage(url, tmdbPage)
     if (!fetched) {
       if (collected.length === 0) return null
       break
     }
-    totalPages = fetched.totalPages
-    collected.push(...fetched.results)
+    totalPages = Math.min(fetched.totalPages, TMDB_MAX_PAGE)
+    totalResults = Math.max(totalResults, fetched.totalResults)
+
+    const seen = new Set<number>(
+      collected
+        .map((m) => (typeof m?.id === 'number' ? m.id : -1))
+        .filter((id) => id >= 0)
+    )
+    for (const movie of fetched.results) {
+      const id = typeof movie?.id === 'number' ? movie.id : null
+      if (id != null) {
+        if (seen.has(id)) continue
+        seen.add(id)
+      }
+      collected.push(movie)
+    }
+
     if (tmdbPage >= totalPages) break
     tmdbPage++
   }
 
-  // Dedupe by TMDB id in case adjacent pages somehow overlap
-  const seen = new Set<number>()
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const unique: any[] = []
-  for (const movie of collected) {
-    const id = typeof movie?.id === 'number' ? movie.id : null
-    if (id != null) {
-      if (seen.has(id)) continue
-      seen.add(id)
-    }
-    unique.push(movie)
-  }
-
-  const results = unique.slice(skip, skip + limit)
+  const results = collected.slice(skip, skip + limit)
   const nextOffset = startOffset + results.length
-  const nextTmdbPage = Math.floor(nextOffset / TMDB_PAGE_SIZE) + 1
-  const hasMore = results.length === limit && nextTmdbPage <= totalPages
+  const knownTotal = totalResults > 0 ? totalResults : totalPages * TMDB_PAGE_SIZE
+  const hasMore =
+    results.length === limit &&
+    nextOffset < knownTotal &&
+    Math.floor(nextOffset / TMDB_PAGE_SIZE) + 1 <= totalPages
 
   return {
     results,

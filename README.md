@@ -43,37 +43,38 @@ This project uses [`next/font`](https://nextjs.org/docs/app/building-your-applic
 | `yarn lint` | Run ESLint via `next lint` |
 | `yarn sync:catalog` | Sync the catalog into Supabase |
 
-> **Windows note — paths containing `&`.** Yarn Classic (v1) spawns package
-> scripts through a shell using the project directory as the working directory.
-> If the project path contains an ampersand (`&`) — e.g.
-> `C:\Users\Vicky&Alexandre❤️\...` — the shell treats `&` as a command
-> separator and **every** `yarn run <script>` fails with
+> **Windows note — home directories containing `&`.** Yarn Classic (v1) spawns
+> package scripts through `cmd.exe` after prepending its temp shim directory and
+> the user's Yarn bin directory to `PATH`. If the user's home directory contains
+> an ampersand (`&`) — e.g. `C:\Users\Vicky&Alexandre❤️\...` — `cmd.exe`
+> interprets the `&` inside those `PATH` entries as a command separator, so
+> **every** `yarn run <script>` fails with
 > `The system cannot find the path specified.` This is a Yarn v1 limitation, not
 > a problem with the project.
 >
-> The scripts are wired through [`scripts/next.mjs`](scripts/next.mjs:1), a thin
-> Node launcher that spawns the Next.js CLI directly (bypassing the broken shell
-> spawn). On such paths, invoke them with `yarn node` instead of `yarn run`:
+> This is handled automatically. [`scripts/setup-script-shell.mjs`](scripts/setup-script-shell.mjs:1)
+> runs from `postinstall` and, on Windows, points Yarn's `script-shell` at
+> **Git Bash** (shipped with Git for Windows) in the user's home `~/.yarnrc`.
+> Git Bash parses `&` correctly, so `yarn dev` / `yarn build` / `yarn start` /
+> `yarn lint` work as usual. On Linux/macOS the setting is left unset, so
+> Vercel's build uses the default shell.
 >
-> ```bash
-> yarn node scripts/next.mjs dev     # instead of: yarn dev
-> yarn node scripts/next.mjs build   # instead of: yarn build
-> yarn node scripts/next.mjs start   # instead of: yarn start
-> yarn node scripts/next.mjs lint    # instead of: yarn lint
-> yarn node scripts/sync-catalog.mjs # instead of: yarn sync:catalog
-> ```
->
-> On paths **without** `&` (CI, other machines), the plain `yarn dev` /
-> `yarn build` / `yarn start` / `yarn lint` commands work as usual.
+> The machine-specific `script-shell` path is written to `~/.yarnrc` (not the
+> project `.yarnrc`), so it is never committed and the project stays portable.
+> If Git Bash is not installed, install Git for Windows and re-run
+> `yarn install`, or invoke scripts directly with
+> `yarn node scripts/next.mjs <cmd>`.
 
-### Installing on Windows paths containing `&`
+### Installing on Windows home directories containing `&`
 
 The `postinstall` scripts of some transitive dependencies (`unrs-resolver`,
-`sharp`) also fail to resolve their `.bin` shims on such paths. Install with
-`--ignore-scripts` to generate the lockfile and link dependencies:
+`sharp`) can also fail to resolve their `.bin` shims on such paths. If
+`yarn install` fails during those steps, install with `--ignore-scripts` to
+generate the lockfile and link dependencies, then run the setup script manually:
 
 ```bash
 yarn install --ignore-scripts
+node scripts/setup-script-shell.mjs
 ```
 
 `sharp` is an optional dependency and is safe to skip; the app falls back to

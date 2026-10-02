@@ -11,22 +11,21 @@
  *   `cmd.exe` interprets as a command separator. The spawn then fails with
  *   "The system cannot find the path specified." This breaks every
  *   `yarn run <script>` that invokes a binary resolved via `PATH` (such as
- *   `node`), even though `yarn node` and `yarn exec` work when run directly.
+ *   `node`).
  *
- *   The fix is twofold:
- *     1. The package scripts invoke Node via `"%npm_node_execpath%"` (the real
- *        node.exe path that Yarn exports) instead of the bare `node` command.
- *        Quoting the path makes `cmd.exe` treat the `&` literally, bypassing
- *        the broken temp shim entirely.
+ *   The fix has two parts:
+ *     1. `scripts/setup-script-shell.mjs` (run from `postinstall`) points
+ *        Yarn's `script-shell` at Git Bash on Windows, which parses `&`
+ *        correctly. On Linux/macOS it is left unset.
  *     2. This launcher resolves and spawns the Next.js binary via Node's
  *        `child_process` with `shell: false`, so the `&` in any path is never
  *        re-parsed by a shell.
  *
  * Usage:
- *   "%npm_node_execpath%" scripts/next.mjs dev
- *   "%npm_node_execpath%" scripts/next.mjs build
- *   "%npm_node_execpath%" scripts/next.mjs start
- *   "%npm_node_execpath%" scripts/next.mjs lint
+ *   node scripts/next.mjs dev
+ *   node scripts/next.mjs build
+ *   node scripts/next.mjs start
+ *   node scripts/next.mjs lint
  */
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'

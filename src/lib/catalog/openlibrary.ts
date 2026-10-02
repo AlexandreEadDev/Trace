@@ -1,8 +1,13 @@
 import { unstable_cache } from 'next/cache'
 import type { CatalogItem } from './types'
+import { fetchJson } from './http'
 
 const OL = 'https://openlibrary.org'
 const COVERS = 'https://covers.openlibrary.org/b/id'
+
+/** Open Library search results are stable — cache them. */
+const SEARCH_TTL_MS = 10 * 60 * 1000 // 10 min
+const DETAIL_TTL_MS = 30 * 60 * 1000 // 30 min
 
 async function fetchSafe(url: string, ms = 5000): Promise<Response> {
   const controller = new AbortController()
@@ -100,24 +105,114 @@ export async function getTrendingBooks(limit = 24, page = 1): Promise<PagedResul
   return getCachedTrendingBooks(limit, page)
 }
 
-async function fetchAuthorName(authorKey: string): Promise<string | null> {
-  try {
-    const cleanKey = authorKey.startsWith('/') ? authorKey : `/${authorKey}`
-    const res = await fetchSafe(`${OL}${cleanKey}.json`, 4000)
-    if (!res.ok) return null
-    const data = await res.json()
-    return typeof data?.name === 'string' ? data.name : null
-  } catch {
-    return null
+/**
+ * Maps a doc from Open Library's /search.json endpoint.
+ * Fields: key, title, author_name, cover_i, first_publish_year, subject, edition_count.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function searchDocToItem(doc: any): CatalogItem | null {
+  if (!doc?.title || !doc.key) return null
+
+  const coverId = doc.cover_i ?? null
+  const cover = coverUrl(coverId, 'L')
+  if (!cover) return null // Must have a cover
+
+  const authors: string[] = Array.isArray(doc.author_name) ? doc.author_name : []
+  if (authors.length === 0) return null // Must have an author
+
+  const id = typeof doc.key === 'string' ? doc.key.replace('/works/', '') : String(doc.key)
+  const year: number | null = doc.first_publish_year ?? null
+
+  const rawSubjects: string[] = Array.isArray(doc.subject) ? doc.subject.slice(0, 8) : []
+  const genre = rawSubjects[0] ?? null
+
+  const editions: number = typeof doc.edition_count === 'number' ? doc.edition_count : 0
+  const editionScore = Math.min(Math.log10(editions + 1) / Math.log10(200), 1) * 100
+
+  return {
+    externalSource: 'openlibrary',
+    externalId: id,
+    title: doc.title,
+    type: 'book',
+    genre,
+    genres: rawSubjects.length > 0 ? rawSubjects : undefined,
+    coverUrl: cover,
+    releaseYear: year,
+    authors,
+    popularityScore: Math.round(editionScore),
   }
+}
+
+/**
+ * Full-text search against Open Library. Free, no API key, generous limits.
+ * Used as the primary fallback when Google Books is rate-limited (429) or empty.
+ */
+export async function searchOpenLibraryBooks(
+  query: string,
+  limit = 24,
+  page = 1,
+  subject?: string,
+): Promise<PagedResult> {
+  const url = new URL(`${OL}/search.json`)
+  const q = query.trim()
+  // Open Library supports fielded queries; combine free text with subject.
+  const parts: string[] = []
+  if (q) parts.push(q)
+  if (subject) parts.push(`subject:"${subject}"`)
+  url.searchParams.set('q', parts.length > 0 ? parts.join(' ') : 'bestseller')
+  url.searchParams.set('limit', String(Math.min(limit + 12, 100)))
+  url.searchParams.set('page', String(page))
+  // Only return entries that have a cover and an author (keeps the grid clean).
+  url.searchParams.set('fields', 'key,title,author_name,cover_i,first_publish_year,subject,edition_count')
+  url.searchParams.set('has_fulltext', 'false')
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const data = await fetchJson<any>(url.toString(), {
+    timeoutMs: 8000,
+    retries: 3,
+    backoffMs: 500,
+    cacheTtlMs: SEARCH_TTL_MS,
+  })
+  if (!data) return { items: [], hasMore: false }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const docs: any[] = data.docs ?? []
+  const items = docs
+    .map(searchDocToItem)
+    .filter((it): it is CatalogItem => it !== null)
+    .slice(0, limit)
+
+  const total = typeof data.numFound === 'number' ? data.numFound : 0
+  const hasMore = page * limit < total && docs.length > 0
+  return { items, hasMore }
+}
+
+/**
+ * Trending books by subject (used for the no-query browse view).
+ * Falls back to the weekly trending endpoint when no subject is given.
+ */
+export async function getOpenLibraryBySubject(subject: string, limit = 24, page = 1): Promise<PagedResult> {
+  return searchOpenLibraryBooks('', limit, page, subject)
+}
+
+async function fetchAuthorName(authorKey: string): Promise<string | null> {
+  const cleanKey = authorKey.startsWith('/') ? authorKey : `/${authorKey}`
+  const data = await fetchJson<{ name?: string }>(`${OL}${cleanKey}.json`, {
+    timeoutMs: 4000,
+    retries: 2,
+    cacheTtlMs: DETAIL_TTL_MS,
+  })
+  return typeof data?.name === 'string' ? data.name : null
 }
 
 export async function getBookByExternalId(externalId: string): Promise<CatalogItem | null> {
   try {
-    const res = await fetchSafe(`${OL}/works/${externalId}.json`, 12000)
-    if (!res.ok) return null
-
-    const work = await res.json()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const work = await fetchJson<any>(`${OL}/works/${externalId}.json`, {
+      timeoutMs: 12000,
+      retries: 3,
+      cacheTtlMs: DETAIL_TTL_MS,
+    })
     if (!work?.title) return null
 
     const coverId =

@@ -7,8 +7,18 @@
  */
 import type { CatalogItem } from './types'
 import { catalogDebug, isCatalogDebug } from './debugLog'
+import { fetchJson } from './http'
 
 const BASE = 'https://www.googleapis.com/books/v1/volumes'
+
+/** Google Books list/search results change slowly — cache them. */
+const SEARCH_TTL_MS = 10 * 60 * 1000 // 10 min
+const DETAIL_TTL_MS = 30 * 60 * 1000 // 30 min
+
+/** True when a Google Books API key is configured (server-side). */
+export function hasGoogleBooksKey(): boolean {
+  return Boolean(process.env.GOOGLE_BOOKS_API_KEY?.trim())
+}
 
 function applyGoogleBooksKey(url: string): string {
   const key = process.env.GOOGLE_BOOKS_API_KEY?.trim()
@@ -18,38 +28,30 @@ function applyGoogleBooksKey(url: string): string {
   return u.toString()
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-async function fetchSafe(url: string, ms = 8000): Promise<Response> {
-  const controller = new AbortController()
-  const id = setTimeout(() => controller.abort(), ms)
-  try {
-    return await fetch(url, { signal: controller.signal, cache: 'no-store' })
-  } finally {
-    clearTimeout(id)
-  }
-}
-
-/** Requêtes Google Books avec clé API optionnelle + backoff sur 429 / 503. */
-async function fetchGoogleBooks(url: string, ms = 12000): Promise<Response> {
+/**
+ * Fetch a Google Books JSON payload with the API key applied, retries and
+ * exponential backoff (handled by the shared http helper). Returns null on
+ * failure so callers can fall back to another provider.
+ */
+async function fetchGoogleBooksJson<T = unknown>(
+  url: string,
+  cacheTtlMs = SEARCH_TTL_MS,
+): Promise<T | null> {
   const keyed = applyGoogleBooksKey(url)
-  const maxAttempts = 4
-  let last: Response | null = null
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const res = await fetchSafe(keyed, ms)
-    last = res
-    if (res.ok) return res
-    if (res.status !== 429 && res.status !== 503) return res
-    if (isCatalogDebug()) {
-      catalogDebug('googlebooks.retry', { attempt: attempt + 1, status: res.status })
-    }
-    if (attempt < maxAttempts - 1) {
-      await sleep(800 * 2 ** attempt)
-    }
+  const data = await fetchJson<T>(keyed, {
+    timeoutMs: 8000,
+    retries: 3,
+    backoffMs: 600,
+    cacheTtlMs,
+  })
+  if (isCatalogDebug()) {
+    catalogDebug('googlebooks.fetch', {
+      hasApiKey: hasGoogleBooksKey(),
+      ok: data !== null,
+      url: keyed.replace(/key=[^&]+/, 'key=***'),
+    })
   }
-  return last!
+  return data
 }
 
 /**
@@ -156,26 +158,17 @@ async function fetchVolumes(query: string, startIndex: number, maxResults: numbe
   url.searchParams.set('printType', 'books')
   if (useFilter) url.searchParams.set('filter', 'paid-ebooks')
 
-  const res = await fetchGoogleBooks(url.toString())
-  if (!res.ok) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const data = await fetchGoogleBooksJson<any>(url.toString())
+  if (!data || data?.error) {
     if (isCatalogDebug()) {
       catalogDebug('googlebooks.fetchVolumes', {
         query,
         startIndex,
-        httpStatus: res.status,
         ok: false,
-        hasApiKey: Boolean(process.env.GOOGLE_BOOKS_API_KEY?.trim()),
-      })
-    }
-    return { items: [], totalItems: 0 }
-  }
-  const data = await res.json()
-  if (data?.error) {
-    if (isCatalogDebug()) {
-      catalogDebug('googlebooks.fetchVolumes', {
-        query,
-        apiError: data.error?.message ?? data.error,
-        code: data.error?.code,
+        hasApiKey: hasGoogleBooksKey(),
+        apiError: data?.error?.message ?? null,
+        code: data?.error?.code ?? null,
       })
     }
     return { items: [], totalItems: 0 }
@@ -202,7 +195,6 @@ async function fetchVolumes(query: string, startIndex: number, maxResults: numbe
     catalogDebug('googlebooks.fetchVolumes', {
       query,
       startIndex,
-      httpStatus: res.status,
       rawVolumes: volumes.length,
       mappedNull: mapped.filter((x) => x === null).length,
       afterDedupe: kept.length,
@@ -299,10 +291,9 @@ export async function findBookByTitleAuthor(
     url.searchParams.set('orderBy', 'relevance')
     url.searchParams.set('printType', 'books')
 
-    const res = await fetchGoogleBooks(url.toString())
-    if (!res.ok) return null
-    const data = await res.json()
-    if (data?.error) return null
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const data = await fetchGoogleBooksJson<any>(url.toString())
+    if (!data || data?.error) return null
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const volumes: any[] = data.items ?? []
     const candidates = volumes.map(volumeToItem).filter(Boolean) as CatalogItem[]
@@ -353,10 +344,9 @@ export async function getBookDetailById(volumeId: string): Promise<CatalogItem |
 
 export async function getBookByExternalId(externalId: string): Promise<CatalogItem | null> {
   try {
-    const res = await fetchGoogleBooks(`${BASE}/${encodeURIComponent(externalId)}`)
-    if (!res.ok) return null
-    const v = await res.json()
-    if (v?.error) return null
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const v = await fetchGoogleBooksJson<any>(`${BASE}/${encodeURIComponent(externalId)}`, DETAIL_TTL_MS)
+    if (!v || v?.error) return null
 
     const item = volumeToItem(v)
     if (!item) return null
@@ -394,10 +384,9 @@ export async function getSimilarBooks(authors?: string[], genre?: string | null)
     url.searchParams.set('orderBy', 'relevance')
     url.searchParams.set('printType', 'books')
 
-    const res = await fetchGoogleBooks(url.toString())
-    if (!res.ok) return []
-    const data = await res.json()
-    if (data?.error) return []
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const data = await fetchGoogleBooksJson<any>(url.toString())
+    if (!data || data?.error) return []
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const volumes: any[] = data.items ?? []
     return dedupeBooks(
@@ -458,10 +447,9 @@ export async function getBookSeries(
     url.searchParams.set('orderBy', 'relevance')
     url.searchParams.set('printType', 'books')
 
-    const res = await fetchGoogleBooks(url.toString())
-    if (!res.ok) return []
-    const data = await res.json()
-    if (data?.error) return []
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const data = await fetchGoogleBooksJson<any>(url.toString())
+    if (!data || data?.error) return []
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const volumes: any[] = data.items ?? []
     return dedupeBooks(

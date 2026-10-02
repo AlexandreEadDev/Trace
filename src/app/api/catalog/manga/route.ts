@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from 'next/server'
-import { getTrendingManga, searchManga } from '@/lib/catalog/jikan'
+import { getTrendingMangaUnified, searchMangaUnified } from '@/lib/catalog/manga'
 import { catalogDebug, isCatalogDebug } from '@/lib/catalog/debugLog'
 
 export const dynamic = 'force-dynamic'
@@ -10,8 +10,8 @@ export async function GET(req: NextRequest) {
   const page = Math.max(1, Number(req.nextUrl.searchParams.get('page') ?? '1'))
   try {
     const result = q
-      ? await searchManga(q, 24, page, genre ?? undefined)
-      : await getTrendingManga(24, page, genre ?? undefined)
+      ? await searchMangaUnified(q, 24, page, genre ?? undefined)
+      : await getTrendingMangaUnified(24, page, genre ?? undefined)
 
     if (isCatalogDebug()) {
       catalogDebug('api/catalog/manga', {

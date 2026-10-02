@@ -727,10 +727,10 @@ function CatalogContent() {
                   if (mode === 'movie' || mode === 'tv') return 'Ajoutez TMDB_API_KEY dans .env.local pour les films et séries'
                   if (mode === 'game') return 'Ajoutez RAWG_API_KEY dans .env.local pour tous les jeux'
                   if (mode === 'book') {
-                    return 'Aucun livre renvoyé par Google Books (souvent quota 429 sans clé API). Ajoute GOOGLE_BOOKS_API_KEY dans .env.local puis redémarre le serveur, ou réessaie plus tard.'
+                    return 'Aucun livre trouvé (Google Books + Open Library). Ajoute GOOGLE_BOOKS_API_KEY dans .env.local pour de meilleurs résultats, puis redémarre le serveur.'
                   }
                   if (mode === 'manga') {
-                    return 'Aucun manga renvoyé par Jikan (réseau, limite ou filtres trop stricts). Réessaie plus tard ou assouplis les filtres.'
+                    return 'Aucun manga trouvé (Jikan + AniList). Réessaie dans quelques instants ou assouplis les filtres.'
                   }
                   return 'Aucun résultat'
                 })()}

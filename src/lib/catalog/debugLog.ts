@@ -2,7 +2,7 @@
  * Logs de diagnostic catalogue (livres / mangas).
  * Active avec dans `.env.local` :
  *   NEXT_PUBLIC_TRACE_CATALOG_DEBUG=1
- * Puis redémarre `npm run dev`. Les messages apparaissent dans le terminal (API)
+ * Puis redémarre `yarn dev`. Les messages apparaissent dans le terminal (API)
  * et dans la console du navigateur (page catalogue).
  */
 export function isCatalogDebug(): boolean {

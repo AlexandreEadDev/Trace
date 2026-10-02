@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from 'next/server'
-import { searchBooks } from '@/lib/catalog/googlebooks'
+import { searchBooksUnified } from '@/lib/catalog/books'
 import { catalogDebug, isCatalogDebug } from '@/lib/catalog/debugLog'
 
 export const dynamic = 'force-dynamic'
@@ -9,13 +9,13 @@ export async function GET(req: NextRequest) {
   const genre = req.nextUrl.searchParams.get('genre')
   const page = Math.max(1, Number(req.nextUrl.searchParams.get('page') ?? '1'))
   try {
-    let result: Awaited<ReturnType<typeof searchBooks>>
+    let result: Awaited<ReturnType<typeof searchBooksUnified>>
     if (q) {
-      result = await searchBooks(q, 24, page, genre ?? undefined)
+      result = await searchBooksUnified(q, 24, page, genre ?? undefined)
     } else if (genre) {
-      result = await searchBooks('', 24, page, genre)
+      result = await searchBooksUnified('', 24, page, genre)
     } else {
-      result = await searchBooks('', 24, page)
+      result = await searchBooksUnified('', 24, page)
     }
 
     if (isCatalogDebug()) {

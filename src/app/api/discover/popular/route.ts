@@ -3,8 +3,8 @@ import { createClient } from '@/lib/supabase/server'
 import { encodeCatalogId, type CatalogSource } from '@/lib/catalog/types'
 import type { CatalogItem } from '@/lib/catalog/types'
 import type { DiscoverPopularItem } from '@/lib/discover/types'
-import { searchBooks } from '@/lib/catalog/googlebooks'
-import { getTrendingManga } from '@/lib/catalog/jikan'
+import { searchBooksUnified } from '@/lib/catalog/books'
+import { getTrendingMangaUnified } from '@/lib/catalog/manga'
 import { getTrendingMovies } from '@/lib/catalog/tmdb'
 import { getTrendingGames as getRawgTrendingGames } from '@/lib/catalog/rawg'
 import { getTrendingGames as getFreetogameTrending } from '@/lib/catalog/freetogame'
@@ -86,8 +86,8 @@ function catalogToDiscover(item: CatalogItem): DiscoverPopularItem {
 
 async function fetchExternalSeed(): Promise<CatalogItem[]> {
   const [books, manga, movies, rawgG, ftgG] = await Promise.all([
-    searchBooks('bestseller', 8, 1).then((r) => r.items),
-    getTrendingManga(8, 1).then((r) => r.items),
+    searchBooksUnified('bestseller', 8, 1).then((r) => r.items),
+    getTrendingMangaUnified(8, 1).then((r) => r.items),
     getTrendingMovies(8, 1).then((r) => r.items),
     getRawgTrendingGames(8, 1).then((r) => r.items),
     getFreetogameTrending(8),

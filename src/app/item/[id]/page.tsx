@@ -14,7 +14,7 @@ import { getGameByExternalId as getFtgGame } from '@/lib/catalog/freetogame'
 import { getGameByExternalId as getRawgGame, getGameSeries, getSuggestedGames } from '@/lib/catalog/rawg'
 import { getMovieByExternalId, getMovieCollection, getMovieWatchProviders, getSimilarMovies } from '@/lib/catalog/tmdb'
 import { getTvByExternalId, getSimilarTv } from '@/lib/catalog/tmdb-tv'
-import { getMangaByExternalId, getMangaRelations, getMangaRecommendations } from '@/lib/catalog/jikan'
+import { getMangaBySource, getMangaRelationsUnified, getMangaRecommendationsUnified } from '@/lib/catalog/manga'
 import { ExpandableText } from './ExpandableText'
 import { TrailerEmbed } from './TrailerEmbed'
 import { WatchProviders } from './WatchProviders'
@@ -139,7 +139,7 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
       else if (external.source === 'tmdb_tv') catalogMeta = await getTvByExternalId(external.id)
       else if (external.source === 'openlibrary') catalogMeta = await getOlBook(external.id)
       else if (external.source === 'googlebooks') catalogMeta = await getGbBook(external.id)
-      else if (external.source === 'jikan') catalogMeta = await getMangaByExternalId(external.id)
+      else if (external.source === 'jikan' || external.source === 'anilist') catalogMeta = await getMangaBySource(external.source, external.id)
     } else {
       let fetched: CatalogItem | null = null
       if (external.source === 'openlibrary') fetched = await getOlBook(external.id)
@@ -148,7 +148,7 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
       else if (external.source === 'freetogame') fetched = await getFtgGame(external.id)
       else if (external.source === 'tmdb') fetched = await getMovieByExternalId(external.id)
       else if (external.source === 'tmdb_tv') fetched = await getTvByExternalId(external.id)
-      else if (external.source === 'jikan') fetched = await getMangaByExternalId(external.id)
+      else if (external.source === 'jikan' || external.source === 'anilist') fetched = await getMangaBySource(external.source, external.id)
 
       if (!fetched) notFound()
       catalogMeta = fetched
@@ -199,7 +199,7 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
     // Hydration: when arriving from a Supabase UUID (e.g. Dashboard link), reconstruct
     // the external descriptor so the page can fetch trailer/screenshots/synopsis/related.
     if (item.external_source && item.external_id) {
-      const validSources: CatalogSource[] = ['openlibrary', 'googlebooks', 'freetogame', 'rawg', 'tmdb', 'tmdb_tv', 'jikan']
+      const validSources: CatalogSource[] = ['openlibrary', 'googlebooks', 'freetogame', 'rawg', 'tmdb', 'tmdb_tv', 'jikan', 'anilist']
       if (validSources.includes(item.external_source as CatalogSource)) {
         effectiveExternal = {
           source: item.external_source as CatalogSource,
@@ -211,7 +211,7 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
         else if (ext.source === 'tmdb_tv') catalogMeta = await getTvByExternalId(ext.id)
         else if (ext.source === 'openlibrary') catalogMeta = await getOlBook(ext.id)
         else if (ext.source === 'googlebooks') catalogMeta = await getGbBook(ext.id)
-        else if (ext.source === 'jikan') catalogMeta = await getMangaByExternalId(ext.id)
+        else if (ext.source === 'jikan' || ext.source === 'anilist') catalogMeta = await getMangaBySource(ext.source, ext.id)
       }
     }
   }
@@ -272,8 +272,8 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
         ? getGameSeries(eff.id)
         : eff.source === 'tmdb' && catalogMeta?.collectionId
         ? getMovieCollection(catalogMeta.collectionId)
-        : eff.source === 'jikan'
-        ? getMangaRelations(eff.id)
+        : eff.source === 'jikan' || eff.source === 'anilist'
+        ? getMangaRelationsUnified(eff.source, eff.id)
         : eff.source === 'googlebooks' || eff.source === 'openlibrary'
         ? getBookSeries(catalogMeta?.seriesId ?? null, item.title, catalogMeta?.authors, catalogMeta?.seriesTitle ?? null)
         : Promise.resolve([])
@@ -285,8 +285,8 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
         ? getSimilarMovies(eff.id)
         : eff.source === 'tmdb_tv'
         ? getSimilarTv(eff.id)
-        : eff.source === 'jikan'
-        ? getMangaRecommendations(eff.id)
+        : eff.source === 'jikan' || eff.source === 'anilist'
+        ? getMangaRecommendationsUnified(eff.source, eff.id)
         : eff.source === 'googlebooks' || eff.source === 'openlibrary'
         ? getSimilarBooks(catalogMeta?.authors, catalogMeta?.genre)
         : Promise.resolve([])

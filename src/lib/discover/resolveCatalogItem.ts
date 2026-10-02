@@ -4,7 +4,7 @@ import { getBookByExternalId as getGbBook } from '@/lib/catalog/googlebooks'
 import { getGameByExternalId as getFtgGame } from '@/lib/catalog/freetogame'
 import { getGameByExternalId as getRawgGame } from '@/lib/catalog/rawg'
 import { getMovieByExternalId } from '@/lib/catalog/tmdb'
-import { getMangaByExternalId } from '@/lib/catalog/jikan'
+import { getMangaBySource } from '@/lib/catalog/manga'
 import { getTvByExternalId } from '@/lib/catalog/tmdb-tv'
 
 export async function resolveCatalogItem(
@@ -23,7 +23,8 @@ export async function resolveCatalogItem(
     case 'tmdb':
       return getMovieByExternalId(externalId)
     case 'jikan':
-      return getMangaByExternalId(externalId)
+    case 'anilist':
+      return getMangaBySource(source, externalId)
     case 'tmdb_tv':
       return getTvByExternalId(externalId)
     default:

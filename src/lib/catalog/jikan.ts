@@ -1,28 +1,46 @@
 /**
  * Jikan v4 — unofficial MyAnimeList API. Free, no API key required.
- * Rate limit: 3 req/s, 60 req/min. We stay well within this.
+ * Rate limit: 3 req/s, 60 req/min. We stay well within this via caching,
+ * retries with backoff and bounded concurrency.
  */
 import type { CatalogItem } from './types'
+import { fetchJson, mapWithConcurrency, normalizeQuery } from './http'
 
 const BASE = 'https://api.jikan.moe/v4'
 
-async function fetchSafe(url: string, ms = 10000): Promise<Response> {
-  const controller = new AbortController()
-  const id = setTimeout(() => controller.abort(), ms)
-  try {
-    return await fetch(url, { signal: controller.signal, cache: 'no-store' })
-  } finally {
-    clearTimeout(id)
-  }
+/** Jikan list/search results are stable — cache them. */
+const LIST_TTL_MS = 10 * 60 * 1000 // 10 min
+const DETAIL_TTL_MS = 30 * 60 * 1000 // 30 min
+
+/**
+ * Fetch a Jikan JSON payload with retries/backoff and optional caching.
+ * Returns null on failure so callers can fall back to AniList.
+ */
+async function fetchJikan<T = unknown>(url: string, cacheTtlMs = LIST_TTL_MS): Promise<T | null> {
+  return fetchJson<T>(url, {
+    timeoutMs: 8000,
+    retries: 3,
+    backoffMs: 700, // Jikan 429s need a little breathing room
+    cacheTtlMs,
+  })
+}
+
+/** Shape of Jikan list endpoints (`/manga`, `/top/manga`, `/volumes`, ...). */
+interface JikanListResponse {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  data?: any[]
+  pagination?: { has_next_page?: boolean }
+}
+
+/** Shape of Jikan single-entity endpoints (`/manga/{id}`, `/manga/{id}/full`). */
+interface JikanSingleResponse {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  data?: any
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function toFinitePositiveInt(v: any): number | null {
   return typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.floor(v) : null
-}
-
-function normalizeQuery(q: string): string {
-  return q.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -135,9 +153,8 @@ export async function getTrendingManga(limit = 24, page = 1, genre?: string): Pr
         url.searchParams.set('type', 'manga')
         url.searchParams.set('sfw', 'true')
 
-        const res = await fetchSafe(url.toString())
-        if (!res.ok) return { items: [], hasMore: false }
-        const data = await res.json()
+        const data = await fetchJikan<JikanListResponse>(url.toString())
+        if (!data) return { items: [], hasMore: false }
         const items = (data.data ?? [])
           .map(mangaToItem)
           .filter((it: CatalogItem | null): it is CatalogItem => it !== null)
@@ -153,11 +170,9 @@ export async function getTrendingManga(limit = 24, page = 1, genre?: string): Pr
     url.searchParams.set('type', 'manga')
     url.searchParams.set('sfw', 'true')
 
-    const res = await fetchSafe(url.toString())
-    if (!res.ok) return { items: [], hasMore: false }
-    const data = await res.json()
+    const data = await fetchJikan<JikanListResponse>(url.toString())
+    if (!data) return { items: [], hasMore: false }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const items = (data.data ?? [])
       .map(mangaToItem)
       .filter((it: CatalogItem | null): it is CatalogItem => it !== null)
@@ -185,11 +200,9 @@ export async function searchManga(query: string, limit = 24, page = 1, genre?: s
       if (genreId) url.searchParams.set('genres', String(genreId))
     }
 
-    const res = await fetchSafe(url.toString())
-    if (!res.ok) return { items: [], hasMore: false }
-    const data = await res.json()
+    const data = await fetchJikan<JikanListResponse>(url.toString())
+    if (!data) return { items: [], hasMore: false }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const items = (data.data ?? [])
       .map(mangaToItem)
       .filter((it: CatalogItem | null): it is CatalogItem => it !== null)
@@ -206,15 +219,13 @@ export async function getMangaByExternalId(externalId: string): Promise<CatalogI
   try {
     // Prefer /full for richer metadata. Fallback to base endpoint if unavailable/rate-limited.
     let m: Record<string, unknown> | null = null
-    const fullRes = await fetchSafe(`${BASE}/manga/${externalId}/full`)
-    if (fullRes.ok) {
-      const fullData = await fullRes.json()
-      m = fullData?.data ?? null
+    const fullData = await fetchJikan<JikanSingleResponse>(`${BASE}/manga/${externalId}/full`, DETAIL_TTL_MS)
+    if (fullData?.data) {
+      m = fullData.data as Record<string, unknown>
     } else {
-      const res = await fetchSafe(`${BASE}/manga/${externalId}`)
-      if (!res.ok) return null
-      const data = await res.json()
-      m = data?.data ?? null
+      const data = await fetchJikan<JikanSingleResponse>(`${BASE}/manga/${externalId}`, DETAIL_TTL_MS)
+      if (!data?.data) return null
+      m = data.data as Record<string, unknown>
     }
 
     const base = mangaToItem(m)
@@ -268,17 +279,15 @@ export async function getMangaVolumes(
   let resolvedTotalChapters = totalChapters
   if (resolvedTotalVolumes == null && resolvedTotalChapters == null) {
     try {
-      const fullRes = await fetchSafe(`${BASE}/manga/${externalId}/full`)
-      if (fullRes.ok) {
-        const full = await fullRes.json()
-        const d = full?.data ?? {}
+      const full = await fetchJikan<JikanSingleResponse>(`${BASE}/manga/${externalId}/full`, DETAIL_TTL_MS)
+      if (full?.data) {
+        const d = full.data as Record<string, unknown>
         resolvedTotalVolumes = toFinitePositiveInt(d.volumes)
         resolvedTotalChapters = toFinitePositiveInt(d.chapters)
       } else {
-        const baseRes = await fetchSafe(`${BASE}/manga/${externalId}`)
-        if (baseRes.ok) {
-          const base = await baseRes.json()
-          const d = base?.data ?? {}
+        const base = await fetchJikan<JikanSingleResponse>(`${BASE}/manga/${externalId}`, DETAIL_TTL_MS)
+        if (base?.data) {
+          const d = base.data as Record<string, unknown>
           resolvedTotalVolumes = toFinitePositiveInt(d.volumes)
           resolvedTotalChapters = toFinitePositiveInt(d.chapters)
         }
@@ -289,9 +298,8 @@ export async function getMangaVolumes(
   }
 
   try {
-    const res = await fetchSafe(`${BASE}/manga/${externalId}/volumes`)
-    if (res.ok) {
-      const data = await res.json()
+    const data = await fetchJikan<JikanListResponse>(`${BASE}/manga/${externalId}/volumes`, DETAIL_TTL_MS)
+    if (data) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const volumes: any[] = data.data ?? []
       if (volumes.length > 0) {
@@ -325,21 +333,15 @@ export async function getMangaVolumes(
 
 export async function getMangaRecommendations(externalId: string): Promise<CatalogItem[]> {
   try {
-    const res = await fetchSafe(`${BASE}/manga/${externalId}/recommendations`)
-    if (!res.ok) return []
-    const data = await res.json()
+    const data = await fetchJikan<JikanListResponse>(`${BASE}/manga/${externalId}/recommendations`, DETAIL_TTL_MS)
+    if (!data) return []
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const entries: any[] = (data.data ?? []).slice(0, 10)
-    const results = await Promise.allSettled(
-      entries.map((e) =>
-        fetchSafe(`${BASE}/manga/${e.entry.mal_id}`)
-          .then((r) => r.json())
-          .then((d) => mangaToItem(d.data))
-      )
-    )
-    return results
-      .filter((r): r is PromiseFulfilledResult<CatalogItem> => r.status === 'fulfilled' && r.value !== null)
-      .map((r) => r.value)
+    const items = await mapWithConcurrency(entries, 3, async (e) => {
+      const d = await fetchJikan<JikanSingleResponse>(`${BASE}/manga/${e.entry.mal_id}`, DETAIL_TTL_MS)
+      return d?.data ? mangaToItem(d.data) : null
+    })
+    return items.filter((it): it is CatalogItem => it !== null)
   } catch {
     return []
   }
@@ -347,9 +349,8 @@ export async function getMangaRecommendations(externalId: string): Promise<Catal
 
 export async function getMangaRelations(externalId: string): Promise<CatalogItem[]> {
   try {
-    const res = await fetchSafe(`${BASE}/manga/${externalId}/relations`)
-    if (!res.ok) return []
-    const data = await res.json()
+    const data = await fetchJikan<JikanListResponse>(`${BASE}/manga/${externalId}/relations`, DETAIL_TTL_MS)
+    if (!data) return []
 
     // Collect Sequel, Prequel, Side Story, Alternative Version MAL ids
     const RELEVANT = new Set(['Sequel', 'Prequel', 'Side Story', 'Alternative Version', 'Full Story', 'Summary', 'Parent Story'])
@@ -364,15 +365,12 @@ export async function getMangaRelations(externalId: string): Promise<CatalogItem
 
     if (relatedIds.length === 0) return []
 
-    // Fetch up to 8 related items in parallel
-    const results = await Promise.allSettled(
-      relatedIds.slice(0, 8).map((id) =>
-        fetchSafe(`${BASE}/manga/${id}`).then((r) => r.json()).then((d) => mangaToItem(d.data))
-      )
-    )
-    return results
-      .filter((r): r is PromiseFulfilledResult<CatalogItem> => r.status === 'fulfilled' && r.value !== null)
-      .map((r) => r.value)
+    // Fetch up to 8 related items with bounded concurrency
+    const items = await mapWithConcurrency(relatedIds.slice(0, 8), 3, async (id) => {
+      const d = await fetchJikan<JikanSingleResponse>(`${BASE}/manga/${id}`, DETAIL_TTL_MS)
+      return d?.data ? mangaToItem(d.data) : null
+    })
+    return items.filter((it): it is CatalogItem => it !== null)
   } catch {
     return []
   }

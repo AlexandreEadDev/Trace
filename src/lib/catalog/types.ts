@@ -1,4 +1,4 @@
-export type CatalogSource = 'openlibrary' | 'googlebooks' | 'freetogame' | 'rawg' | 'tmdb' | 'tmdb_tv' | 'jikan'
+export type CatalogSource = 'openlibrary' | 'googlebooks' | 'freetogame' | 'rawg' | 'tmdb' | 'tmdb_tv' | 'jikan' | 'anilist'
 
 export interface CatalogItem {
   externalSource: CatalogSource
@@ -70,7 +70,7 @@ export function decodeCatalogId(
   if (idx === -1) return null
   const source = encoded.slice(0, idx) as CatalogSource
   const id = decodeURIComponent(encoded.slice(idx + 2))
-  const valid: CatalogSource[] = ['openlibrary', 'googlebooks', 'freetogame', 'rawg', 'tmdb', 'tmdb_tv', 'jikan']
+  const valid: CatalogSource[] = ['openlibrary', 'googlebooks', 'freetogame', 'rawg', 'tmdb', 'tmdb_tv', 'jikan', 'anilist']
   if (!valid.includes(source)) return null
   return { source, id }
 }

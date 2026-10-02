@@ -1,19 +1,14 @@
 import type { CatalogItem } from './types'
+import { fetchJson, mapWithConcurrency, normalizeQuery } from './http'
 
 const BASE = 'https://api.rawg.io/api'
 
-function getKey(): string | null {
-  return process.env.RAWG_API_KEY ?? null
-}
+/** Cache TTLs — list/trending data changes slowly, so cache aggressively. */
+const LIST_TTL_MS = 10 * 60 * 1000 // 10 min
+const DETAIL_TTL_MS = 30 * 60 * 1000 // 30 min
 
-async function fetchSafe(url: string, ms = 10000): Promise<Response> {
-  const controller = new AbortController()
-  const id = setTimeout(() => controller.abort(), ms)
-  try {
-    return await fetch(url, { signal: controller.signal, cache: 'no-store' })
-  } finally {
-    clearTimeout(id)
-  }
+function getKey(): string | null {
+  return process.env.RAWG_API_KEY?.trim() || null
 }
 
 /**
@@ -131,153 +126,144 @@ export async function getTrendingGames(limit = 24, page = 1, genre?: string, yea
   const key = getKey()
   if (!key) return { items: [], hasMore: false }
 
-  try {
-    const url = new URL(`${BASE}/games`)
-    url.searchParams.set('key', key)
-    url.searchParams.set('page_size', String(limit))
-    url.searchParams.set('page', String(page))
-    url.searchParams.set('ordering', '-added')
-    url.searchParams.set('fields', 'id,name,background_image,released,genres,metacritic,rating,ratings_count,added')
-    if (genre) {
-      const slug = RAWG_GENRE_MAP[genre]
-      if (slug) url.searchParams.set('genres', slug)
-    }
-    applyRawgYears(url, yearMin, yearMax)
-
-    const res = await fetchSafe(url.toString())
-    if (!res.ok) return { items: [], hasMore: false }
-    const data = await res.json()
-    const items = (data.results ?? []).map(gameToItem).filter((g: CatalogItem | null): g is CatalogItem => g !== null)
-    const hasMore = data.next !== null && data.next !== undefined
-    return { items, hasMore }
-  } catch {
-    return { items: [], hasMore: false }
+  const url = new URL(`${BASE}/games`)
+  url.searchParams.set('key', key)
+  url.searchParams.set('page_size', String(limit))
+  url.searchParams.set('page', String(page))
+  url.searchParams.set('ordering', '-added')
+  url.searchParams.set('fields', 'id,name,background_image,released,genres,metacritic,rating,ratings_count,added')
+  if (genre) {
+    const slug = RAWG_GENRE_MAP[genre]
+    if (slug) url.searchParams.set('genres', slug)
   }
+  applyRawgYears(url, yearMin, yearMax)
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const data = await fetchJson<any>(url.toString(), { timeoutMs: 8000, retries: 3, cacheTtlMs: LIST_TTL_MS })
+  if (!data) return { items: [], hasMore: false }
+  const items = (data.results ?? []).map(gameToItem).filter((g: CatalogItem | null): g is CatalogItem => g !== null)
+  const hasMore = data.next !== null && data.next !== undefined
+  return { items, hasMore }
 }
 
 export async function searchGames(query: string, limit = 24, page = 1, genre?: string, yearMin?: number, yearMax?: number): Promise<PagedResult> {
   const key = getKey()
   if (!key) return { items: [], hasMore: false }
 
-  try {
-    const url = new URL(`${BASE}/games`)
-    url.searchParams.set('key', key)
-    url.searchParams.set('search', normalizeQuery(query))
-    url.searchParams.set('page_size', String(Math.min(limit * 2, 40)))
-    url.searchParams.set('page', String(page))
-    // No ordering param → RAWG returns by search relevance (better for exact title matches)
-    if (genre) {
-      const slug = RAWG_GENRE_MAP[genre]
-      if (slug) url.searchParams.set('genres', slug)
-    }
-    applyRawgYears(url, yearMin, yearMax)
-
-    const res = await fetchSafe(url.toString())
-    if (!res.ok) return { items: [], hasMore: false }
-    const data = await res.json()
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const all: any[] = data.results ?? []
-    const quality = all.filter(isQualityGame)
-    const pool = quality.length >= Math.ceil(limit / 2) ? quality : all.filter((g) => Boolean(g.background_image))
-
-    // Sort: exact/prefix title match first, then by RAWG's natural relevance order (index in results array)
-    const qNorm = normalizeQuery(query).toLowerCase()
-    pool.sort((a, b) => {
-      const aNorm = normalizeQuery(String(a.name ?? '')).toLowerCase()
-      const bNorm = normalizeQuery(String(b.name ?? '')).toLowerCase()
-      const aExact = aNorm === qNorm ? 2 : aNorm.startsWith(qNorm) ? 1 : 0
-      const bExact = bNorm === qNorm ? 2 : bNorm.startsWith(qNorm) ? 1 : 0
-      if (aExact !== bExact) return bExact - aExact
-      // Keep RAWG's relevance order (original index in results)
-      return all.indexOf(a) - all.indexOf(b)
-    })
-    const hasMore = data.next !== null && data.next !== undefined
-    return { items: pool.slice(0, limit).map(gameToItem).filter((g: CatalogItem | null): g is CatalogItem => g !== null), hasMore }
-  } catch {
-    return { items: [], hasMore: false }
+  const url = new URL(`${BASE}/games`)
+  url.searchParams.set('key', key)
+  url.searchParams.set('search', normalizeQuery(query))
+  url.searchParams.set('page_size', String(Math.min(limit * 2, 40)))
+  url.searchParams.set('page', String(page))
+  // No ordering param → RAWG returns by search relevance (better for exact title matches)
+  if (genre) {
+    const slug = RAWG_GENRE_MAP[genre]
+    if (slug) url.searchParams.set('genres', slug)
   }
+  applyRawgYears(url, yearMin, yearMax)
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const data = await fetchJson<any>(url.toString(), { timeoutMs: 8000, retries: 3, cacheTtlMs: LIST_TTL_MS })
+  if (!data) return { items: [], hasMore: false }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const all: any[] = data.results ?? []
+  const quality = all.filter(isQualityGame)
+  const pool = quality.length >= Math.ceil(limit / 2) ? quality : all.filter((g) => Boolean(g.background_image))
+
+  // Sort: exact/prefix title match first, then by RAWG's natural relevance order (index in results array)
+  const qNorm = normalizeQuery(query).toLowerCase()
+  pool.sort((a, b) => {
+    const aNorm = normalizeQuery(String(a.name ?? '')).toLowerCase()
+    const bNorm = normalizeQuery(String(b.name ?? '')).toLowerCase()
+    const aExact = aNorm === qNorm ? 2 : aNorm.startsWith(qNorm) ? 1 : 0
+    const bExact = bNorm === qNorm ? 2 : bNorm.startsWith(qNorm) ? 1 : 0
+    if (aExact !== bExact) return bExact - aExact
+    // Keep RAWG's relevance order (original index in results)
+    return all.indexOf(a) - all.indexOf(b)
+  })
+  const hasMore = data.next !== null && data.next !== undefined
+  return { items: pool.slice(0, limit).map(gameToItem).filter((g: CatalogItem | null): g is CatalogItem => g !== null), hasMore }
 }
 
 export async function getGameByExternalId(externalId: string): Promise<CatalogItem | null> {
   const key = getKey()
   if (!key) return null
 
-  try {
-    // Fetch game detail, screenshots, and trailer movies in parallel
-    const [detailRes, screenshotsRes, moviesRes] = await Promise.all([
-      fetchSafe(`${BASE}/games/${externalId}?key=${key}`),
-      fetchSafe(`${BASE}/games/${externalId}/screenshots?key=${key}&page_size=8`),
-      fetchSafe(`${BASE}/games/${externalId}/movies?key=${key}`),
-    ])
-    if (!detailRes.ok) return null
-    const game = await detailRes.json()
+  // Fetch game detail, screenshots, and trailer movies in parallel.
+  // Each call is cached + coalesced, so repeat visits are instant.
+  const [game, moviesData, ssData] = await Promise.all([
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    fetchJson<any>(`${BASE}/games/${externalId}?key=${key}`, { timeoutMs: 8000, retries: 3, cacheTtlMs: DETAIL_TTL_MS }),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    fetchJson<any>(`${BASE}/games/${externalId}/movies?key=${key}`, { timeoutMs: 6000, retries: 2, cacheTtlMs: DETAIL_TTL_MS }),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    fetchJson<any>(`${BASE}/games/${externalId}/screenshots?key=${key}&page_size=8`, { timeoutMs: 6000, retries: 2, cacheTtlMs: DETAIL_TTL_MS }),
+  ])
 
-    const item = gameToItem(game)
-    if (!item) return null
+  if (!game) return null
 
-    // Short gameplay clip from the detail response (direct video URL)
-    const clipUrl: string | null = game.clip?.clip ?? null
+  const item = gameToItem(game)
+  if (!item) return null
 
-    // YouTube trailer key from RAWG movies endpoint (preferred over clip)
-    let trailerKey: string | null = null
-    if (moviesRes.ok) {
-      const moviesData = await moviesRes.json()
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const firstMovie: any = (moviesData.results ?? [])[0]
-      if (firstMovie?.youtube_id) {
-        trailerKey = String(firstMovie.youtube_id)
-      }
-    }
+  // Short gameplay clip from the detail response (direct video URL)
+  const clipUrl: string | null = game.clip?.clip ?? null
 
-    // Screenshots from dedicated endpoint, or fall back to short_screenshots in detail
-    let screenshots: string[] = []
-    if (screenshotsRes.ok) {
-      const ssData = await screenshotsRes.json()
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      screenshots = (ssData.results ?? []).map((s: any) => s.image).filter(Boolean)
-    }
-    if (screenshots.length === 0 && Array.isArray(game.short_screenshots)) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      screenshots = game.short_screenshots.map((s: any) => s.image).filter(Boolean)
-    }
-
-    return { ...item, clipUrl, trailerKey, screenshots }
-  } catch {
-    return null
+  // YouTube trailer key from RAWG movies endpoint (preferred over clip)
+  let trailerKey: string | null = null
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const firstMovie: any = (moviesData?.results ?? [])[0]
+  if (firstMovie?.youtube_id) {
+    trailerKey = String(firstMovie.youtube_id)
   }
+
+  // Screenshots from dedicated endpoint, or fall back to short_screenshots in detail
+  let screenshots: string[] = []
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  screenshots = (ssData?.results ?? []).map((s: any) => s.image).filter(Boolean)
+  if (screenshots.length === 0 && Array.isArray(game.short_screenshots)) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    screenshots = game.short_screenshots.map((s: any) => s.image).filter(Boolean)
+  }
+
+  return { ...item, clipUrl, trailerKey, screenshots }
 }
 
 export function hasRawgKey(): boolean {
-  return Boolean(process.env.RAWG_API_KEY)
-}
-
-function normalizeQuery(q: string): string {
-  return q.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  return Boolean(process.env.RAWG_API_KEY?.trim())
 }
 
 export async function getGameSeries(externalId: string): Promise<CatalogItem[]> {
   const key = getKey()
   if (!key) return []
-  try {
-    const res = await fetchSafe(`${BASE}/games/${externalId}/game-series?key=${key}&page_size=20`)
-    if (!res.ok) return []
-    const data = await res.json()
-    return (data.results ?? []).map(gameToItem).filter((g: CatalogItem | null): g is CatalogItem => g !== null)
-  } catch {
-    return []
-  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const data = await fetchJson<any>(`${BASE}/games/${externalId}/game-series?key=${key}&page_size=20`, {
+    timeoutMs: 6000,
+    retries: 2,
+    cacheTtlMs: DETAIL_TTL_MS,
+  })
+  if (!data) return []
+  return (data.results ?? []).map(gameToItem).filter((g: CatalogItem | null): g is CatalogItem => g !== null)
 }
 
 export async function getSuggestedGames(externalId: string): Promise<CatalogItem[]> {
   const key = getKey()
   if (!key) return []
-  try {
-    const res = await fetchSafe(`${BASE}/games/${externalId}/suggested?key=${key}&page_size=12`)
-    if (!res.ok) return []
-    const data = await res.json()
-    return (data.results ?? []).map(gameToItem).filter((g: CatalogItem | null): g is CatalogItem => g !== null)
-  } catch {
-    return []
-  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const data = await fetchJson<any>(`${BASE}/games/${externalId}/suggested?key=${key}&page_size=12`, {
+    timeoutMs: 6000,
+    retries: 2,
+    cacheTtlMs: DETAIL_TTL_MS,
+  })
+  if (!data) return []
+  return (data.results ?? []).map(gameToItem).filter((g: CatalogItem | null): g is CatalogItem => g !== null)
+}
+
+/**
+ * Batch-resolve several games in one go with bounded concurrency.
+ * Useful for prefetching a grid of game details without hammering RAWG.
+ */
+export async function getGamesByIds(ids: string[]): Promise<CatalogItem[]> {
+  const results = await mapWithConcurrency(ids, 4, (id) => getGameByExternalId(id))
+  return results.filter((g): g is CatalogItem => g !== null)
 }

@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { encodeCatalogId, type CatalogSource } from '@/lib/catalog/types'
 import type { DiscoverSearchResult } from '@/lib/discover/types'
-import { searchBooks } from '@/lib/catalog/googlebooks'
-import { searchManga } from '@/lib/catalog/jikan'
+import { searchBooksUnified } from '@/lib/catalog/books'
+import { searchMangaUnified } from '@/lib/catalog/manga'
 import { searchMovies } from '@/lib/catalog/tmdb'
 import { searchTv } from '@/lib/catalog/tmdb-tv'
 import { searchGames as searchGamesRawg } from '@/lib/catalog/rawg'
@@ -30,6 +30,7 @@ function rpcRowToResult(row: RpcSearchRow): DiscoverSearchResult {
     'tmdb',
     'tmdb_tv',
     'jikan',
+    'anilist',
   ]
   const catalogId =
     row.external_source &&
@@ -65,8 +66,8 @@ function catalogToSearchResult(
 
 async function searchExternalParallel(q: string): Promise<DiscoverSearchResult[]> {
   const [books, manga, movies, tv, rawg, ftg] = await Promise.all([
-    searchBooks(q, 12, 1).then((r) => r.items),
-    searchManga(q, 12, 1).then((r) => r.items),
+    searchBooksUnified(q, 12, 1).then((r) => r.items),
+    searchMangaUnified(q, 12, 1).then((r) => r.items),
     searchMovies(q, 12, 1).then((r) => r.items),
     searchTv(q, 8, 1).then((r) => r.items),
     searchGamesRawg(q, 12, 1).then((r) => r.items),

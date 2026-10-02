@@ -5,6 +5,11 @@
 /.pnp
 .pnp.js
 .yarn/install-state.gz
+.yarn/cache
+.yarn/unplugged
+
+# npm lockfile (this project uses Yarn — see README)
+package-lock.json
 
 # testing
 /coverage

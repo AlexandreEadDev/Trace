@@ -13,6 +13,8 @@ import type { ModeAccent } from '@/context/ModeContext'
 import { cn } from '@/lib/utils'
 import { encodeCatalogId } from '@/lib/catalog/types'
 import type { CatalogItem } from '@/lib/catalog/types'
+import { useCardContextMenu } from '@/hooks/useCardContextMenu'
+import { CardContextMenu } from '@/components/CardContextMenu'
 import { catalogDebug, isCatalogDebug } from '@/lib/catalog/debugLog'
 import {
   BOOK_GENRES,
@@ -70,17 +72,26 @@ function CoverImage({ src, alt, accent }: { src: string | null; alt: string; acc
 
 function CatalogCard({ item, accent }: { item: CatalogItem; accent: ModeAccent }) {
   const href = `/item/${encodeCatalogId(item.externalSource, item.externalId)}`
+  const catalogId = encodeCatalogId(item.externalSource, item.externalId)
+  const { open, close, longPressHandlers, onClickCapture } = useCardContextMenu()
+
   const trackClick = () => {
     fetch('/api/analytics/click', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ itemId: encodeCatalogId(item.externalSource, item.externalId) }),
+      body: JSON.stringify({ itemId: catalogId }),
     }).catch(() => {})
   }
 
   return (
-    <Link href={href} onClick={trackClick} className="group block">
-      <div className="overflow-hidden rounded-xl border bg-card shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-md">
+    <Link
+      href={href}
+      onClick={trackClick}
+      onClickCapture={onClickCapture}
+      {...longPressHandlers}
+      className="group block select-none"
+    >
+      <div className="relative overflow-hidden rounded-xl border bg-card shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-md">
         <div className="relative aspect-[2/3] w-full overflow-hidden bg-muted">
           <CoverImage src={item.coverUrl} alt={item.title} accent={accent} />
         </div>
@@ -104,6 +115,14 @@ function CatalogCard({ item, accent }: { item: CatalogItem; accent: ModeAccent }
             )}
           </div>
         </div>
+
+        {open && (
+          <CardContextMenu
+            target={{ catalogId, title: item.title }}
+            accent={accent}
+            onClose={close}
+          />
+        )}
       </div>
     </Link>
   )

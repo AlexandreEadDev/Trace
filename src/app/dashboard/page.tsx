@@ -7,6 +7,7 @@ import Link from 'next/link'
 import {
   BookOpen, LibraryBig, Gamepad2, Film, Tv, Star, Notebook, ArrowRight,
   Trophy, BarChart3, CalendarDays, TrendingUp, RefreshCw, CheckCircle2, AlertCircle,
+  Search, X, ArrowUpDown, ChevronDown,
 } from 'lucide-react'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
@@ -19,6 +20,8 @@ import { cn } from '@/lib/utils'
 import { MODE_STATUS_LABELS } from '@/types'
 import type { LibraryEntryWithItem, StatusType, ItemType } from '@/types'
 import { MovieWheel } from '@/components/MovieWheel'
+import { useCardContextMenu } from '@/hooks/useCardContextMenu'
+import { CardContextMenu } from '@/components/CardContextMenu'
 
 const MONTH_LABELS = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin', 'Juil', 'Aoû', 'Sep', 'Oct', 'Nov', 'Déc']
 const ACCENT_HEX: Record<string, string> = {
@@ -61,6 +64,97 @@ function monthIndex(date: string) {
   return new Date(date).getMonth()
 }
 
+// ─── Search & sort ────────────────────────────────────────────────────────────
+
+/** The five sortable criteria. Direction is handled separately. */
+type SortKey = 'added' | 'title' | 'release' | 'rating' | 'completed'
+
+/** Sort direction. `asc` = A→Z / oldest→newest / lowest→highest. */
+type SortDir = 'asc' | 'desc'
+
+interface SortOption {
+  key: SortKey
+  label: string
+  /** Label describing the ascending direction, e.g. "A → Z". */
+  ascHint: string
+  /** Label describing the descending direction, e.g. "Z → A". */
+  descHint: string
+  /** Direction applied when the option is first selected. */
+  defaultDir: SortDir
+}
+
+const SORT_OPTIONS: SortOption[] = [
+  { key: 'added', label: "Date d'ajout", ascHint: 'ancien → récent', descHint: 'récent → ancien', defaultDir: 'desc' },
+  { key: 'title', label: 'Titre', ascHint: 'A → Z', descHint: 'Z → A', defaultDir: 'asc' },
+  { key: 'release', label: 'Année de sortie', ascHint: 'ancien → récent', descHint: 'récent → ancien', defaultDir: 'desc' },
+  { key: 'rating', label: 'Note', ascHint: 'basse → haute', descHint: 'haute → basse', defaultDir: 'desc' },
+  { key: 'completed', label: 'Date de visionnage', ascHint: 'ancien → récent', descHint: 'récent → ancien', defaultDir: 'desc' },
+]
+
+/** Normalize a string for accent/case-insensitive search. */
+function normalizeSearch(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+}
+
+/**
+ * Timestamp of the backlog → completed transition.
+ * Falls back to updated_at / created_at for legacy rows that predate
+ * the completed_at column, so completed entries always have a value.
+ */
+function entryCompletedTime(e: LibraryEntryWithItem): number {
+  return new Date(e.completed_at ?? e.updated_at ?? e.created_at).getTime()
+}
+
+/** Filter entries by a free-text query across title, genre and private notes. */
+function filterByQuery(entries: LibraryEntryWithItem[], query: string): LibraryEntryWithItem[] {
+  const q = normalizeSearch(query.trim())
+  if (!q) return entries
+  return entries.filter((e) => {
+    const item = e.items
+    if (!item) return false
+    const haystack = normalizeSearch(
+      [item.title, item.genre ?? '', e.private_notes ?? '', item.release_year?.toString() ?? ''].join(' ')
+    )
+    return haystack.includes(q)
+  })
+}
+
+/**
+ * Sort a copy of the entries by the given criterion and direction.
+ * `ratings` maps item_id → rating (0 when the item has no review).
+ */
+function sortEntries(
+  entries: LibraryEntryWithItem[],
+  key: SortKey,
+  dir: SortDir,
+  ratings: Map<string, number>
+): LibraryEntryWithItem[] {
+  const copy = [...entries]
+  const sign = dir === 'asc' ? 1 : -1
+
+  const compare = (a: LibraryEntryWithItem, b: LibraryEntryWithItem): number => {
+    switch (key) {
+      case 'title':
+        return a.items.title.localeCompare(b.items.title, 'fr', { sensitivity: 'base' })
+      case 'added':
+        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+      case 'release':
+        return (a.items.release_year ?? 0) - (b.items.release_year ?? 0)
+      case 'rating':
+        return (ratings.get(a.items.id) ?? 0) - (ratings.get(b.items.id) ?? 0)
+      case 'completed':
+        return entryCompletedTime(a) - entryCompletedTime(b)
+      default:
+        return 0
+    }
+  }
+
+  return copy.sort((a, b) => sign * compare(a, b))
+}
+
 // ─── Sub-components ─────────────────────────────────────────────────────────
 
 function StatCard({
@@ -98,16 +192,33 @@ function StatCard({
 function EntryRow({
   entry,
   accent,
+  rating,
+  onChanged,
+  menuOpenId,
+  onMenuOpenChange,
 }: {
   entry: LibraryEntryWithItem
   accent: ModeAccent
+  rating?: number
+  onChanged?: () => void
+  /** Id of the single card whose context menu is open across the dashboard. */
+  menuOpenId: string | null
+  onMenuOpenChange: (id: string | null) => void
 }) {
   const item = entry.items
+  const { open, close, longPressHandlers, onClickCapture } = useCardContextMenu({
+    activeId: menuOpenId,
+    id: entry.id,
+    onOpenChange: onMenuOpenChange,
+  })
   return (
     <Link
       href={`/item/${item.id}`}
-      className="group flex items-center gap-3 rounded-lg border bg-card p-3 transition-all hover:-translate-y-0.5 hover:shadow-sm"
+      onClickCapture={onClickCapture}
+      {...longPressHandlers}
+      className="group relative block select-none rounded-lg border bg-card p-3 transition-all hover:-translate-y-0.5 hover:shadow-sm"
     >
+      <div className="flex items-center gap-3">
       <div className="h-14 w-10 shrink-0 overflow-hidden rounded border">
         {item.cover_url ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -144,7 +255,17 @@ function EntryRow({
           </p>
         )}
       </div>
-      <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+        <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+      </div>
+
+      {open && (
+        <CardContextMenu
+          target={{ itemId: item.id, title: item.title, rating, status: entry.status }}
+          accent={accent}
+          onClose={close}
+          onChanged={onChanged}
+        />
+      )}
     </Link>
   )
 }
@@ -180,53 +301,103 @@ function CustomTooltip({ active, payload, label }: { active?: boolean; payload?:
 export default function DashboardPage() {
   const { mode, accent } = useMode()
   const [allEntries, setAllEntries] = useState<LibraryEntryWithItem[]>([])
-  const [allReviews, setAllReviews] = useState<{ rating: number; created_at: string }[]>([])
+  const [allReviews, setAllReviews] = useState<{ item_id: string; rating: number; created_at: string }[]>([])
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState<StatusType>('backlog')
   const [syncState, setSyncState] = useState<'idle' | 'syncing' | 'done' | 'error'>('idle')
   const [syncStats, setSyncStats] = useState<{ updated: number; total: number } | null>(null)
+  const [query, setQuery] = useState('')
+  const [sortKey, setSortKey] = useState<SortKey>('added')
+  const [sortDir, setSortDir] = useState<SortDir>('desc')
+  const [sortOpen, setSortOpen] = useState(false)
+  /** Id of the single card whose inline context menu is open (null = none). */
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null)
 
   const year = new Date().getFullYear()
   const hexAccent = ACCENT_HEX[accent] ?? '#D97706'
 
-  useEffect(() => {
-    const supabase = createClient()
-    let cancelled = false
-
-    const load = (showSpinner: boolean) => {
+  /** Fetch library entries + reviews for the current mode. */
+  const load = useCallback(
+    async (showSpinner: boolean) => {
       if (showSpinner) setLoading(true)
-      Promise.all([
+      const supabase = createClient()
+      const [{ data: libData }, { data: revData }] = await Promise.all([
         supabase
           .from('user_libraries')
           .select('*, items(*)')
           .order('created_at', { ascending: false }),
         supabase
           .from('reviews')
-          .select('rating, created_at')
+          .select('item_id, rating, created_at')
           .order('created_at', { ascending: false }),
-      ]).then(([{ data: libData }, { data: revData }]) => {
-        if (cancelled) return
-        const filtered = ((libData ?? []) as LibraryEntryWithItem[]).filter(
-          (e) => e.items && e.items.type === mode
-        )
-        setAllEntries(dedupeLibraryEntries(filtered))
-        setAllReviews((revData ?? []) as { rating: number; created_at: string }[])
-        setLoading(false)
-      })
-    }
+      ])
+      const filtered = ((libData ?? []) as LibraryEntryWithItem[]).filter(
+        (e) => e.items && e.items.type === mode
+      )
+      setAllEntries(dedupeLibraryEntries(filtered))
+      setAllReviews((revData ?? []) as { item_id: string; rating: number; created_at: string }[])
+      setLoading(false)
+    },
+    [mode]
+  )
 
-    load(true)
+  useEffect(() => {
+    let cancelled = false
+    const run = async (showSpinner: boolean) => {
+      if (cancelled) return
+      await load(showSpinner)
+    }
+    run(true)
 
     // Silent refetch when returning from an item page (status may have changed).
-    const onFocus = () => load(false)
+    const onFocus = () => run(false)
     window.addEventListener('focus', onFocus)
     return () => {
       cancelled = true
       window.removeEventListener('focus', onFocus)
     }
-  }, [mode])
+  }, [load])
+
+  /** Silent refresh used after a quick action from the card context menu. */
+  const refresh = useCallback(async () => {
+    await load(false)
+  }, [load])
 
   const byStatus = (status: StatusType) => allEntries.filter((e) => e.status === status)
+
+  /** item_id → rating, used by the "Note" sort criterion. */
+  const ratingsByItem = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const r of allReviews) map.set(r.item_id, r.rating)
+    return map
+  }, [allReviews])
+
+  /** Entries for the active tab, filtered by the search query then sorted. */
+  const visibleEntries = useMemo(
+    () => sortEntries(filterByQuery(byStatus(activeTab), query), sortKey, sortDir, ratingsByItem),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [allEntries, activeTab, query, sortKey, sortDir, ratingsByItem]
+  )
+
+  const isSearching = query.trim().length > 0
+
+  const activeSortOption = SORT_OPTIONS.find((o) => o.key === sortKey) ?? SORT_OPTIONS[0]
+  const activeSortHint = sortDir === 'asc' ? activeSortOption.ascHint : activeSortOption.descHint
+
+  /**
+   * Select a sort criterion.
+   * - Clicking the active criterion toggles its direction and keeps the menu open.
+   * - Selecting a different criterion applies its default direction and closes the menu.
+   */
+  const selectSort = (key: SortKey) => {
+    if (key === sortKey) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+      return
+    }
+    setSortKey(key)
+    setSortDir(SORT_OPTIONS.find((o) => o.key === key)?.defaultDir ?? 'desc')
+    setSortOpen(false)
+  }
 
   // ── Stats ──
   const totalItems = allEntries.length
@@ -452,8 +623,8 @@ export default function DashboardPage() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <h2 className="text-base font-semibold text-muted-foreground">Ma collection</h2>
-            {mode === 'movie' && !loading && byStatus('backlog').length > 0 && (
-              <MovieWheel entries={byStatus('backlog')} accent={accent} />
+            {!loading && byStatus('backlog').length > 0 && (
+              <MovieWheel entries={byStatus('backlog')} accent={accent} mode={mode} />
             )}
           </div>
           <div role="group" className="flex items-center gap-1 rounded-full bg-muted p-1">
@@ -493,6 +664,108 @@ export default function DashboardPage() {
           </div>
         </div>
 
+        {/* Search + sort toolbar */}
+        {!loading && byStatus(activeTab).length > 0 && (
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            {/* Search */}
+            <div className="relative flex-1">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <input
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Rechercher par titre, genre, note…"
+                className={cn(
+                  'w-full rounded-full border bg-card py-2 pl-9 pr-9 text-sm outline-none transition-colors',
+                  `focus:border-${accent}-400 focus:ring-2 focus:ring-${accent}-100`
+                )}
+              />
+              {isSearching && (
+                <button
+                  type="button"
+                  onClick={() => setQuery('')}
+                  aria-label="Effacer la recherche"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-full p-1 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+
+            {/* Sort dropdown */}
+            <div className="group relative shrink-0">
+              <div
+                className={cn(
+                  'flex w-full items-center gap-1 rounded-full border bg-card pl-3 pr-1.5 py-1.5 text-sm font-medium transition-colors sm:w-auto',
+                  sortOpen ? `border-${accent}-400` : 'hover:border-muted-foreground/30'
+                )}
+              >
+                <button
+                  type="button"
+                  onClick={() => setSortOpen((v) => !v)}
+                  className="flex min-w-0 flex-1 items-center gap-1.5 py-0.5 text-left"
+                >
+                  <ArrowUpDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <span className="truncate">{activeSortOption.label}</span>
+                  <span className="hidden text-xs font-normal text-muted-foreground sm:inline">{activeSortHint}</span>
+                  <ChevronDown className={cn('h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform', sortOpen && 'rotate-180')} />
+                </button>
+
+                {/* Direction toggle — always visible */}
+                <button
+                  type="button"
+                  onClick={() => setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))}
+                  aria-label={sortDir === 'asc' ? 'Trier par ordre décroissant' : 'Trier par ordre croissant'}
+                  title={sortDir === 'asc' ? 'Ordre décroissant' : 'Ordre croissant'}
+                  className={cn(
+                    'flex h-6 w-6 shrink-0 items-center justify-center rounded-full transition-colors',
+                    `hover:bg-${accent}-50 hover:text-${accent}-600`
+                  )}
+                >
+                  <ArrowUpDown
+                    className={cn('h-3.5 w-3.5 transition-transform', sortDir === 'asc' && 'rotate-180')}
+                  />
+                </button>
+              </div>
+
+              {sortOpen && (
+                <>
+                  {/* Click-away backdrop */}
+                  <div className="fixed inset-0 z-10" onClick={() => setSortOpen(false)} />
+                  <div className="absolute right-0 z-20 mt-1 w-64 overflow-hidden rounded-xl border bg-card shadow-lg">
+                    {SORT_OPTIONS.map((opt) => {
+                      const isActive = sortKey === opt.key
+                      return (
+                        <button
+                          key={opt.key}
+                          type="button"
+                          onClick={() => selectSort(opt.key)}
+                          className={cn(
+                            'flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-muted/60',
+                            isActive ? cn('font-semibold', `text-${accent}-600`) : 'text-foreground'
+                          )}
+                        >
+                          <span className="flex flex-col">
+                            <span>{opt.label}</span>
+                            <span className="text-[11px] font-normal text-muted-foreground">
+                              {isActive ? (sortDir === 'asc' ? opt.ascHint : opt.descHint) : opt.ascHint}
+                            </span>
+                          </span>
+                          {isActive && (
+                            <ArrowUpDown
+                              className={cn('h-3.5 w-3.5 shrink-0 transition-transform', sortDir === 'asc' && 'rotate-180')}
+                            />
+                          )}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Content */}
         <div className="space-y-2">
           {loading ? (
@@ -503,9 +776,31 @@ export default function DashboardPage() {
             </>
           ) : byStatus(activeTab).length === 0 ? (
             <EmptyState status={activeTab} accent={accent} itemType={mode} />
+          ) : visibleEntries.length === 0 ? (
+            <div className="flex flex-col items-center gap-2 py-12 text-center">
+              <Search className={cn('h-10 w-10', `text-${accent}-200`)} />
+              <p className="text-muted-foreground">
+                Aucun résultat pour «&nbsp;{query.trim()}&nbsp;»
+              </p>
+              <button
+                type="button"
+                onClick={() => setQuery('')}
+                className={cn('text-sm font-medium underline', `text-${accent}-600`)}
+              >
+                Effacer la recherche
+              </button>
+            </div>
           ) : (
-            byStatus(activeTab).map((entry) => (
-              <EntryRow key={entry.id} entry={entry} accent={accent} />
+            visibleEntries.map((entry) => (
+              <EntryRow
+                key={entry.id}
+                entry={entry}
+                accent={accent}
+                rating={ratingsByItem.get(entry.items.id)}
+                onChanged={refresh}
+                menuOpenId={menuOpenId}
+                onMenuOpenChange={setMenuOpenId}
+              />
             ))
           )}
         </div>

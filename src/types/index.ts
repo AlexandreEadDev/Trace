@@ -29,6 +29,10 @@ export interface LibraryEntry {
   status: StatusType
   private_notes: string | null
   created_at: string
+  /** Last time the entry was modified (e.g. backlog → completed). */
+  updated_at: string | null
+  /** Timestamp of the backlog → completed transition (null while in backlog). */
+  completed_at: string | null
 }
 
 export interface ItemWithReviews extends Item {

@@ -6,7 +6,8 @@ import {
   Dices, X, ArrowLeft, ExternalLink, RefreshCw, ChevronDown, ChevronUp,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { MOVIE_GENRES } from '@/lib/catalog/genres'
+import { GENRE_LISTS_BY_MODE } from '@/lib/catalog/genres'
+import type { CatalogMode } from '@/lib/catalog/genres'
 import type { LibraryEntryWithItem } from '@/types'
 import type { ModeAccent } from '@/context/ModeContext'
 
@@ -30,6 +31,29 @@ const ACCENT_STYLES: Record<ModeAccent, { bg: string; light: string; text: strin
   indigo: { bg: 'bg-indigo-600', light: 'bg-indigo-50', text: 'text-indigo-600', border: 'border-indigo-300', hex: '#4F46E5' },
   rose: { bg: 'bg-rose-600', light: 'bg-rose-50', text: 'text-rose-600', border: 'border-rose-300', hex: '#E11D48' },
   teal: { bg: 'bg-teal-600', light: 'bg-teal-50', text: 'text-teal-600', border: 'border-teal-300', hex: '#0D9488' },
+}
+
+/**
+ * Per-mode copy so the wheel reads naturally for every media type.
+ * `noun` / `nounPlural` are used in counters ("3 films dans le pool"),
+ * `verb` is the result headline ("Ce soir, tu regardes…").
+ */
+interface ModeCopy {
+  noun: string
+  nounPlural: string
+  verb: string
+  /** Emoji + label for the "non-animation" type filter, when relevant. */
+  typeLabel: string
+  /** Whether the Animation / non-animation split makes sense for this mode. */
+  hasAnimationSplit: boolean
+}
+
+const MODE_COPY: Record<CatalogMode, ModeCopy> = {
+  movie: { noun: 'film', nounPlural: 'films', verb: 'tu regardes', typeLabel: '🎬 Film', hasAnimationSplit: true },
+  tv: { noun: 'série', nounPlural: 'séries', verb: 'tu regardes', typeLabel: '📺 Série', hasAnimationSplit: true },
+  book: { noun: 'livre', nounPlural: 'livres', verb: 'tu lis', typeLabel: '📖 Livre', hasAnimationSplit: false },
+  manga: { noun: 'manga', nounPlural: 'mangas', verb: 'tu lis', typeLabel: '📚 Manga', hasAnimationSplit: false },
+  game: { noun: 'jeu', nounPlural: 'jeux', verb: 'tu joues à', typeLabel: '🎮 Jeu', hasAnimationSplit: false },
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -75,23 +99,23 @@ function sampleSegments(pool: LibraryEntryWithItem[]): LibraryEntryWithItem[] {
   return shuffle(unique).slice(0, MAX_SEGMENTS)
 }
 
-function genreMatchesLabel(genre: string, label: string): boolean {
-  const def = MOVIE_GENRES.find((g) => g.label === label)
+function genreMatchesLabel(genre: string, label: string, mode: CatalogMode): boolean {
+  const def = GENRE_LISTS_BY_MODE[mode].find((g) => g.label === label)
   if (!def) return false
   const norm = genre.toLowerCase()
   return def.matches.some((m) => norm.includes(m.toLowerCase()))
 }
 
-function isAnimation(genre: string | null): boolean {
+function isAnimation(genre: string | null, mode: CatalogMode): boolean {
   if (!genre) return false
-  return genreMatchesLabel(genre, 'Animation')
+  return genreMatchesLabel(genre, 'Animation', mode)
 }
 
-function matchesGenres(genre: string | null, labels: string[], mode: 'or' | 'and'): boolean {
+function matchesGenres(genre: string | null, labels: string[], genreMode: 'or' | 'and', mode: CatalogMode): boolean {
   if (labels.length === 0) return true
   if (!genre) return false
-  if (mode === 'or') return labels.some((l) => genreMatchesLabel(genre, l))
-  return labels.every((l) => genreMatchesLabel(genre, l))
+  if (genreMode === 'or') return labels.some((l) => genreMatchesLabel(genre, l, mode))
+  return labels.every((l) => genreMatchesLabel(genre, l, mode))
 }
 
 // ─── Wheel canvas logic ───────────────────────────────────────────────────────
@@ -166,7 +190,7 @@ function drawWheelCanvas(
 // ─── Filter step ─────────────────────────────────────────────────────────────
 
 interface FilterState {
-  type: 'all' | 'animation' | 'film'
+  type: 'all' | 'animation' | 'non-animation'
   genres: string[]
   genreMode: 'or' | 'and'
   customIds: Set<string> | null
@@ -179,6 +203,7 @@ function FilterStep({
   onValidate,
   onClose,
   accent,
+  mode,
 }: {
   entries: LibraryEntryWithItem[]
   state: FilterState
@@ -186,31 +211,34 @@ function FilterStep({
   onValidate: () => void
   onClose: () => void
   accent: ModeAccent
+  mode: CatalogMode
 }) {
   const ac = ACCENT_STYLES[accent] ?? ACCENT_STYLES.rose
+  const copy = MODE_COPY[mode]
+  const genreList = GENRE_LISTS_BY_MODE[mode]
   const [showCustom, setShowCustom] = useState(false)
 
   const availableGenres = useMemo(() => {
     const seen = new Set<string>()
     for (const e of entries) {
       if (!e.items.genre) continue
-      for (const def of MOVIE_GENRES) {
+      for (const def of genreList) {
         if (def.matches.some((m) => e.items.genre!.toLowerCase().includes(m.toLowerCase()))) {
           seen.add(def.label)
         }
       }
     }
     return Array.from(seen).sort()
-  }, [entries])
+  }, [entries, genreList])
 
   const filteredCount = useMemo(() => {
     let pool = dedupeWheelEntries(entries)
-    if (state.type === 'animation') pool = pool.filter((e) => isAnimation(e.items.genre))
-    else if (state.type === 'film') pool = pool.filter((e) => !isAnimation(e.items.genre))
-    if (state.genres.length > 0) pool = pool.filter((e) => matchesGenres(e.items.genre, state.genres, state.genreMode))
+    if (state.type === 'animation') pool = pool.filter((e) => isAnimation(e.items.genre, mode))
+    else if (state.type === 'non-animation') pool = pool.filter((e) => !isAnimation(e.items.genre, mode))
+    if (state.genres.length > 0) pool = pool.filter((e) => matchesGenres(e.items.genre, state.genres, state.genreMode, mode))
     if (state.customIds !== null) pool = pool.filter((e) => state.customIds!.has(e.id))
     return pool.length
-  }, [entries, state])
+  }, [entries, state, mode])
 
   const setType = (type: FilterState['type']) => onChange({ ...state, type })
   const toggleGenre = (g: string) =>
@@ -218,6 +246,16 @@ function FilterStep({
   const setGenreMode = (genreMode: 'or' | 'and') => onChange({ ...state, genreMode })
   const setCustomIds = (fn: (prev: Set<string> | null) => Set<string> | null) =>
     onChange({ ...state, customIds: fn(state.customIds) })
+
+  const typeOptions: { value: FilterState['type']; label: string }[] = [
+    { value: 'all', label: 'Tous' },
+    ...(copy.hasAnimationSplit
+      ? [
+          { value: 'non-animation' as const, label: copy.typeLabel },
+          { value: 'animation' as const, label: '🎨 Animation' },
+        ]
+      : []),
+  ]
 
   return (
     <div className="flex flex-col h-full">
@@ -236,23 +274,25 @@ function FilterStep({
       <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
 
         {/* Type */}
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">Type</p>
-          <div className="flex gap-2">
-            {(['all', 'film', 'animation'] as const).map((t) => (
-              <button
-                key={t}
-                onClick={() => setType(t)}
-                className={cn(
-                  'rounded-full px-3 py-1.5 text-sm font-medium transition-all',
-                  state.type === t ? `${ac.bg} text-white shadow-sm` : 'bg-muted text-muted-foreground hover:text-foreground'
-                )}
-              >
-                {t === 'all' ? 'Tous' : t === 'film' ? '🎬 Film' : '🎨 Animation'}
-              </button>
-            ))}
+        {typeOptions.length > 1 && (
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">Type</p>
+            <div className="flex gap-2">
+              {typeOptions.map(({ value, label }) => (
+                <button
+                  key={value}
+                  onClick={() => setType(value)}
+                  className={cn(
+                    'rounded-full px-3 py-1.5 text-sm font-medium transition-all',
+                    state.type === value ? `${ac.bg} text-white shadow-sm` : 'bg-muted text-muted-foreground hover:text-foreground'
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Genres + AND/OR */}
         {availableGenres.length > 0 && (
@@ -299,8 +339,8 @@ function FilterStep({
                   {state.genreMode === 'or' ? 'OU' : 'ET'}
                 </span>
                 {state.genreMode === 'or'
-                  ? ' — films correspondant à au moins un des genres sélectionnés'
-                  : ' — films correspondant à tous les genres sélectionnés'}
+                  ? ` — ${copy.nounPlural} correspondant à au moins un des genres sélectionnés`
+                  : ` — ${copy.nounPlural} correspondant à tous les genres sélectionnés`}
               </p>
             )}
           </div>
@@ -316,7 +356,7 @@ function FilterStep({
               Sélection personnalisée
               {state.customIds !== null && (
                 <span className={cn('text-xs font-normal', ac.text)}>
-                  {state.customIds.size} film{state.customIds.size !== 1 ? 's' : ''} sélectionné{state.customIds.size !== 1 ? 's' : ''}
+                  {state.customIds.size} {state.customIds.size !== 1 ? copy.nounPlural : copy.noun} sélectionné{state.customIds.size !== 1 ? 's' : ''}
                 </span>
               )}
             </span>
@@ -376,7 +416,7 @@ function FilterStep({
                           return next.size === entries.length ? null : next
                         })
                       }
-                      className="h-4 w-4 rounded cursor-pointer accent-rose-600 shrink-0"
+                      className={cn('h-4 w-4 rounded cursor-pointer shrink-0', `accent-${accent}-600`)}
                     />
                     {e.items.cover_url && (
                       // eslint-disable-next-line @next/next/no-img-element
@@ -399,9 +439,8 @@ function FilterStep({
       <div className="px-5 py-4 border-t bg-card flex items-center justify-between gap-3">
         <p className="text-sm text-muted-foreground">
           {filteredCount === 0
-            ? 'Aucun film trouvé'
-            : <><span className={cn('font-semibold', ac.text)}>{filteredCount}</span> film{filteredCount !== 1 ? 's' : ''} dans le pool</>
-          }
+            ? `Aucun ${copy.noun} trouvé`
+            : <><span className={cn('font-semibold', ac.text)}>{filteredCount}</span> {filteredCount !== 1 ? copy.nounPlural : copy.noun} dans le pool</>}
         </p>
         <button
           onClick={onValidate}
@@ -429,14 +468,17 @@ function WheelStep({
   onClose,
   onRelaunch,
   accent,
+  mode,
 }: {
   segments: LibraryEntryWithItem[]
   onBack: () => void
   onClose: () => void
   onRelaunch: () => void
   accent: ModeAccent
+  mode: CatalogMode
 }) {
   const ac = ACCENT_STYLES[accent] ?? ACCENT_STYLES.rose
+  const copy = MODE_COPY[mode]
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const angleRef = useRef(0)
   const animRef = useRef<number | undefined>(undefined)
@@ -559,7 +601,7 @@ function WheelStep({
         {result && !spinning && (
           <div className={cn('w-full rounded-2xl border-2 overflow-hidden shadow-lg', ac.border)}>
             <div className={cn('px-4 py-2 text-center text-xs font-bold text-white tracking-wide', ac.bg)}>
-              Ce soir, tu regardes…
+              Ce soir, {copy.verb}…
             </div>
             <div className={cn('p-4 flex gap-4 items-center', ac.light)}>
               {result.items.cover_url && (
@@ -618,6 +660,8 @@ function WheelStep({
 interface Props {
   entries: LibraryEntryWithItem[]
   accent: ModeAccent
+  /** Media type the wheel operates on. Defaults to 'movie' for backward compatibility. */
+  mode?: CatalogMode
 }
 
 const DEFAULT_FILTERS: FilterState = {
@@ -627,7 +671,7 @@ const DEFAULT_FILTERS: FilterState = {
   customIds: null,
 }
 
-export function MovieWheel({ entries, accent }: Props) {
+export function MovieWheel({ entries, accent, mode = 'movie' }: Props) {
   const ac = ACCENT_STYLES[accent] ?? ACCENT_STYLES.rose
   const [open, setOpen] = useState(false)
   const [step, setStep] = useState<'filters' | 'wheel'>('filters')
@@ -644,12 +688,12 @@ export function MovieWheel({ entries, accent }: Props) {
 
   const buildPool = useCallback(() => {
     let pool = uniqueEntries
-    if (filters.type === 'animation') pool = pool.filter((e) => isAnimation(e.items.genre))
-    else if (filters.type === 'film') pool = pool.filter((e) => !isAnimation(e.items.genre))
-    if (filters.genres.length > 0) pool = pool.filter((e) => matchesGenres(e.items.genre, filters.genres, filters.genreMode))
+    if (filters.type === 'animation') pool = pool.filter((e) => isAnimation(e.items.genre, mode))
+    else if (filters.type === 'non-animation') pool = pool.filter((e) => !isAnimation(e.items.genre, mode))
+    if (filters.genres.length > 0) pool = pool.filter((e) => matchesGenres(e.items.genre, filters.genres, filters.genreMode, mode))
     if (filters.customIds !== null) pool = pool.filter((e) => filters.customIds!.has(e.id))
     return pool
-  }, [uniqueEntries, filters])
+  }, [uniqueEntries, filters, mode])
 
   const handleValidate = () => {
     setSegments(sampleSegments(buildPool()))
@@ -712,6 +756,7 @@ export function MovieWheel({ entries, accent }: Props) {
                 onValidate={handleValidate}
                 onClose={closeModal}
                 accent={accent}
+                mode={mode}
               />
             ) : (
               <WheelStep
@@ -721,6 +766,7 @@ export function MovieWheel({ entries, accent }: Props) {
                 onClose={closeModal}
                 onRelaunch={handleRelaunch}
                 accent={accent}
+                mode={mode}
               />
             )}
           </div>

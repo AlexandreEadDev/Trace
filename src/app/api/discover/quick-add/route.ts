@@ -13,14 +13,14 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  let body: { itemId?: string; catalogId?: string }
+  let body: { itemId?: string; catalogId?: string; resolveOnly?: boolean }
   try {
-    body = (await req.json()) as { itemId?: string; catalogId?: string }
+    body = (await req.json()) as { itemId?: string; catalogId?: string; resolveOnly?: boolean }
   } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
-  const { itemId, catalogId } = body
+  const { itemId, catalogId, resolveOnly } = body
   const uuidRe =
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
@@ -65,6 +65,12 @@ export async function POST(req: Request) {
         { error: upErr?.message ?? 'Could not save item' },
         { status: 400 }
       )
+    }
+
+    // Resolve-only: return the item UUID without touching the user's library.
+    // Used by the context menu to read existing state without side effects.
+    if (resolveOnly) {
+      return NextResponse.json({ ok: true, itemId: itemRow.id })
     }
 
     const { data: lib, error: libErr } = await supabase
